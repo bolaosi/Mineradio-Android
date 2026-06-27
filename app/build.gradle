@@ -1,6 +1,7 @@
 apply plugin: 'com.android.application'
 
 android {
+    namespace "com.mineradio.android"
     compileSdk 34
     defaultConfig {
         applicationId "com.mineradio.android"
@@ -8,9 +9,6 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0.0"
-        ndk {
-            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
-        }
     }
     buildTypes {
         release {
@@ -22,15 +20,11 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    packagingOptions {
-        exclude 'META-INF/LICENSE'
-        exclude 'META-INF/NOTICE'
-    }
 }
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.webkit:webkit:1.9.0'
     implementation 'com.google.android.material:material:1.11.0'
-    implementation 'org.nodejs:nodejs-mobile-android:0.3.1'
+    // nodejs-mobile-android is added via npm, not needed as gradle dependency on CI
 }

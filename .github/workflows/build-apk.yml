@@ -23,19 +23,15 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Create local.properties
-        run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       - name: Install Node.js backend dependencies
         run: |
           cd app/src/main/assets/nodejs-project
           npm install --production
 
-      - name: Generate Gradle Wrapper
-        run: gradle wrapper
-
       - name: Build Release APK
-        run: ./gradlew assembleRelease
+        run: gradle assembleRelease
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
