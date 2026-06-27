@@ -1,4 +1,4 @@
-﻿name: Build Mineradio APK
+name: Build Mineradio APK
 
 on:
   workflow_dispatch:

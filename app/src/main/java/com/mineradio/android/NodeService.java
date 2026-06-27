@@ -1,4 +1,4 @@
-﻿package com.mineradio.android;
+package com.mineradio.android;
 
 import android.content.Context;
 import android.util.Log;
