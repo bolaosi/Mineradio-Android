@@ -1,4 +1,4 @@
-apply plugin: 'com.android.application'
+﻿apply plugin: 'com.android.application'
 
 android {
     namespace "com.mineradio.android"
@@ -26,5 +26,4 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.webkit:webkit:1.9.0'
     implementation 'com.google.android.material:material:1.11.0'
-    // nodejs-mobile-android is added via npm, not needed as gradle dependency on CI
 }
