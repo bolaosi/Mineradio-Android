@@ -28,13 +28,18 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
 
+      - name: Generate Gradle Wrapper
+        run: gradle wrapper --gradle-version 8.5
+
       - name: Install Node.js backend dependencies
         run: |
           cd app/src/main/assets/nodejs-project
           npm install --production
 
       - name: Build Release APK
-        run: ./gradlew assembleRelease
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
