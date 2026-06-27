@@ -1,4 +1,4 @@
-name: Build Mineradio APK
+﻿name: Build Mineradio APK
 
 on:
   workflow_dispatch:
@@ -23,15 +23,18 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Create local.properties
-        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+        run: echo "sdk.dir=" > local.properties
 
       - name: Install Node.js backend dependencies
         run: |
           cd app/src/main/assets/nodejs-project
           npm install --production
 
+      - name: Generate Gradle Wrapper (8.5)
+        run: gradle wrapper --gradle-version 8.5
+
       - name: Build Release APK
-        run: gradle assembleRelease
+        run: ./gradlew assembleRelease
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
