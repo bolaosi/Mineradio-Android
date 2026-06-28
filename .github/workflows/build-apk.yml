@@ -39,10 +39,7 @@ jobs:
       - name: Build Release APK
         run: |
           chmod +x gradlew
-          keytool -genkey -v -keystore release.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android,OU=Dev,O=Mineradio,L=Unknown,C=US"
           ./gradlew assembleRelease
-          ls app/build/outputs/apk/release/
-          $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks release.keystore --ks-pass pass:android --ks-key-alias android app/build/outputs/apk/release/*.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

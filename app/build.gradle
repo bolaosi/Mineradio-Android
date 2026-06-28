@@ -1,4 +1,4 @@
-apply plugin: "com.android.application"
+apply plugin: 'com.android.application'
 
 android {
     namespace "com.mineradio.android"
@@ -11,7 +11,11 @@ android {
         versionName "1.0.0"
     }
     buildTypes {
-        release { minifyEnabled false }
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -20,7 +24,7 @@ android {
 }
 
 dependencies {
-    implementation "androidx.appcompat:appcompat:1.6.1"
-    implementation "androidx.webkit:webkit:1.9.0"
-    implementation "com.google.android.material:material:1.11.0"
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.webkit:webkit:1.9.0'
+    implementation 'com.google.android.material:material:1.11.0'
 }
