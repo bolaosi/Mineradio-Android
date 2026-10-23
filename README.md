@@ -2,6 +2,9 @@
 
 将音乐、粒子可视化、歌词舞台与3D歌单架带到Android。在线接口已内置，安装后无需另外部署后端。
 
+> [!IMPORTANT]
+> **优先使用平板等大屏设备，建议横屏体验。** 当前手机小屏适配仍不完整，部分界面和控件可能显示不全或被遮挡。手机横屏可改善可视空间，但不能保证所有内容完整显示。
+
 基于 [bolaosi/Mineradio-Android](https://github.com/bolaosi/Mineradio-Android)，保留 [原桌面项目](https://github.com/XxHuberrr/Mineradio-paused) 的视觉特色。
 
 ![Mineradio Android 实际界面：粒子歌词、3D歌单架与玻璃播放控制栏](docs/screenshots/mineradio-android-1.2.3.jpg)
