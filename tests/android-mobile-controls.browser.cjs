@@ -1,0 +1,62 @@
+const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
+const { fixture } = require('./mobile-fixture.cjs');
+(async () => {
+  const f = await fixture(), { page } = f, checks = [];
+  try {
+    await page.evaluate(songs => { playQueue = songs; return playQueueAt(0); }, f.songs);
+    await page.waitForFunction(() => audio && !audio.paused && audio.currentTime > 0.15);
+    await page.locator('#mobile-dock [data-route=visual]').tap();
+    await page.screenshot({ path: path.join(f.output, 'android-mobile-visual-top.png') });
+    await page.getByRole('button', { name: '打开完整 DIY 控制台', exact: true }).tap();
+    assert.equal(await page.evaluate(() => diyPlayerMode), true);
+    await page.waitForFunction(() => document.getElementById('fx-panel').classList.contains('peek'));
+    assert.equal(await page.locator('#t-desktopLyrics').isVisible(), false);
+    assert.equal(await page.locator('#cam-seg').isVisible(), false);
+    const before = await page.locator('#fx-panel').evaluate(e => e.scrollTop);
+    await f.swipe('#fx-panel'); await f.swipe('#fx-panel');
+    const after = await page.locator('#fx-panel').evaluate(e => e.scrollTop); assert.ok(after > before + 100);
+    await page.screenshot({ path: path.join(f.output, 'android-mobile-diy-scroll.png') });
+    await page.locator('#mobile-fx-close').tap(); assert.equal(await page.locator('#mobile-panel').isVisible(), true);
+    assert.equal(await page.evaluate(() => audio.paused), false);
+    checks.push({ name: '完整DIY打开/真实手势滚动/固定返回可达，隐藏不支持桌面和摄像头项', before, after });
+    const png = await page.evaluate(() => { const c = document.createElement('canvas'); c.width = c.height = 8; const x = c.getContext('2d'); x.fillStyle = '#c05590'; x.fillRect(0, 0, 8, 8); return c.toDataURL('image/png').split(',')[1]; });
+    const chooserPromise = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: '选择图片 / 视频背景', exact: true }).tap();
+    const chooser = await chooserPromise; await chooser.setFiles({ name: 'MOCK-background.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
+    await page.waitForFunction(() => fx.backgroundMedia && fx.backgroundMedia.type === 'image' && /^data:image\//.test(fx.backgroundImage));
+    assert.equal(await page.evaluate(() => audio.paused), false);
+    await page.getByRole('button', { name: '清除背景媒体', exact: true }).tap();
+    assert.equal(await page.evaluate(() => fx.backgroundMedia), null);
+    checks.push({ name: '实际图片选择/解码/应用/清除背景，不暂停音乐（Chromium文件选择，非Android SAF）' });
+    await page.locator('#mobile-lyrics').tap();
+    await page.evaluate(() => nextTrack()); await page.waitForFunction(() => currentIdx === 1 && audio && !audio.paused);
+    assert.equal(await page.evaluate(() => fx.particleLyrics), false);
+    checks.push({ name: '关歌词后换曲不会自动开启' });
+    await page.locator('#mobile-dock [data-route=local]').tap();
+    await page.locator('#android-local-panel').waitFor({ state: 'visible' });
+    const localBounds = await page.locator('#android-local-panel').boundingBox(), dockBounds = await page.locator('#mobile-dock').boundingBox();
+    assert.ok(localBounds.y + localBounds.height <= dockBounds.y + 1, 'Local panel controls stay above the dock');
+    await page.locator('#mobile-dock [data-route=search]').tap();
+    assert.equal(await page.locator('#android-local-panel').isVisible(), false);
+    assert.equal(await page.evaluate(() => audio.paused), false);
+    checks.push({ name: '本地入口/面板不被底栏遮挡，切换搜索收起本地面板且不暂停' });
+    await page.locator('#mobile-dock [data-route=visual]').tap();
+    await page.locator('#mobile-preset').selectOption('3');
+    await page.evaluate(() => setPreset(2)); // A later explicit choice from existing full DIY controls wins.
+    await page.reload(); await page.waitForFunction(() => window.splashReadyToEnter === true); await page.locator('#splash').tap({ position: { x: 20, y: 60 } }); await page.waitForFunction(() => !document.body.classList.contains('splash-active'));
+    await page.locator('#mobile-dock [data-route=visual]').tap();
+    assert.equal(await page.locator('#mobile-preset').inputValue(), '2');
+    checks.push({ name: '手机与完整DIY共享一份预设持久化，最后显式选择重载后优先' });
+    await page.locator('#user-btn').tap();
+    await page.waitForFunction(() => document.getElementById('user-modal').classList.contains('show'));
+    assert.equal(await page.locator('#mobile-panel').isVisible(), false);
+    await page.locator('#user-modal').getByRole('button', { name: '关闭', exact: true }).tap();
+    await page.locator('#mobile-dock [data-route=queue]').tap(); await page.locator('#home-btn').tap();
+    assert.equal(await page.locator('#mobile-panel').isVisible(), false);
+    checks.push({ name: '账号弹窗和主页入口会收起手机面板，避免覆盖原对话框' });
+    assert.deepEqual(f.errors, []); assert.deepEqual(f.consoleErrors, []);
+    const result = { scope: 'Chromium real DOM/UI, generated MP3 and PNG; mock service/account. No Android device.', checks, errors: f.errors, consoleErrors: f.consoleErrors };
+    fs.writeFileSync(path.join(f.output, 'android-mobile-controls-results.json'), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result, null, 2));
+  } catch (error) { await page.screenshot({ path: path.join(f.output, 'android-mobile-controls-failure.png') }); console.error({ errors: f.errors, consoleErrors: f.consoleErrors, networkFailures: f.networkFailures }); throw error; }
+  finally { await f.close(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });

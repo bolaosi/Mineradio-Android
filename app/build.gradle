@@ -7,8 +7,8 @@ android {
         applicationId "com.mineradio.android"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0.0"
+        versionCode 8
+        versionName "1.2.3-debug"
     }
     buildTypes {
         release {
@@ -21,10 +21,42 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    testOptions {
+        unitTests.includeAndroidResources = true
+        unitTests.all {
+            systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
+            if (project.hasProperty('mineradioRobolectricRuntime')) {
+                systemProperty 'robolectric.offline', 'true'
+                systemProperty 'robolectric.dependency.dir', project.property('mineradioRobolectricRuntime')
+            }
+            if (project.hasProperty('mineradioProbeProxy')) {
+                systemProperty 'http.proxyHost', '127.0.0.1'
+                systemProperty 'https.proxyHost', '127.0.0.1'
+                systemProperty 'http.proxyPort', project.property('mineradioProbeProxy')
+                systemProperty 'https.proxyPort', project.property('mineradioProbeProxy')
+            }
+        }
+    }
+    if (project.hasProperty('mineradioLiveAudioProbe')) {
+        sourceSets.test.java.srcDir(rootProject.file('tests/native-live'))
+    }
+    // Android uses Java clients for official APIs. Node remains a development reference only.
+    aaptOptions {
+        ignoreAssetsPattern '!nodejs-project:!.git:!.gitignore:!node_modules'
+    }
 }
 
 dependencies {
+    // 1.3.1 supports this project's compile/target SDK 34 (no AGP/SDK upgrade required).
+    implementation 'androidx.media3:media3-exoplayer:1.3.1'
+    implementation 'androidx.media3:media3-session:1.3.1'
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.webkit:webkit:1.9.0'
     implementation 'com.google.android.material:material:1.11.0'
+    testImplementation 'org.json:json:20240303'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation('org.robolectric:robolectric:4.12.2') {
+        // These tests exercise Java transport/processors, not native graphics/audio emulation.
+        exclude group: 'org.robolectric', module: 'nativeruntime-dist-compat'
+    }
 }

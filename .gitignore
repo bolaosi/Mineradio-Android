@@ -4,9 +4,19 @@
 /.idea
 .DS_Store
 /build
+/app/build/
 /captures
 .externalNativeBuild
 .cxx
 *.apk
 *.aab
+/output/
+/delivery/
+**/node_modules/
+**/.cookie
+**/.qq-cookie
+**/.env
+**/.env.*
+*.keystore
+*.jks
 

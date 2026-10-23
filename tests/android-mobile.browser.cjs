@@ -1,0 +1,114 @@
+// Full-page touch regression: real Chromium + CDP gestures + locally generated MP3.
+// APIs and account are MOCK; this never proves Android ExoPlayer or real service login.
+const assert = require('node:assert/strict');
+const fs = require('node:fs'), path = require('node:path');
+const { fixture } = require('./mobile-fixture.cjs');
+(async () => {
+  const f = await fixture(), { page } = f, checks = [], gestures = [], external = [];
+  page.on('request', req => { if (!req.url().startsWith(new URL(page.url()).origin) && /^https?:/.test(req.url())) external.push(new URL(req.url()).origin); });
+  const check = (name, details) => checks.push({ name, passed: true, ...details });
+  const top = () => page.locator('#mobile-scroll').evaluate(e => e.scrollTop);
+  async function swipe(label) { const before = await top(); await f.swipe('#mobile-scroll'); const after = await top(); assert.ok(after > before + 100, label + ': expected actual touch pan ' + before + ' -> ' + after); gestures.push({ label, before, after, method: 'CDP touchStart / 14 touchMove / touchEnd' }); }
+  async function visibleSongButton() {
+    const index = await page.locator('#mobile-song-list').evaluate(list => {
+      const sc = document.getElementById('mobile-scroll').getBoundingClientRect();
+      return Array.from(list.children).findIndex(row => { const r = row.getBoundingClientRect(); return r.top > sc.top + 10 && r.bottom < sc.bottom - 10; });
+    });
+    assert.ok(index >= 0, 'At least one complete visible song row'); return page.locator('#mobile-song-list .mobile-song').nth(index);
+  }
+  try {
+    await page.waitForFunction(() => window.AndroidMobile && window.loginStatus.loggedIn);
+    await page.locator('#mobile-dock [data-route=library]').tap();
+    await page.getByRole('button', { name: 'MOCK 歌单 1 网易云 · 100 首', exact: true }).waitFor();
+    await swipe('歌单浏览 - 未播放'); const libraryTop = await top();
+    const visibleLibraryIndex = await page.locator('#mobile-scroll .mobile-row').evaluateAll(rows => { const sc = document.getElementById('mobile-scroll').getBoundingClientRect(); return rows.findIndex(row => { const r = row.getBoundingClientRect(); return r.top > sc.top + 5 && r.bottom < sc.bottom - 5; }); });
+    await page.locator('#mobile-scroll .mobile-row .mobile-song').nth(visibleLibraryIndex).tap();
+    await page.waitForFunction(() => document.querySelectorAll('#mobile-song-list .mobile-row').length === 100);
+    await swipe('歌曲列表 - 未播放'); const beforePlay = await top();
+    await (await visibleSongButton()).tap();
+    await page.waitForFunction(() => window.audio && !audio.paused && audio.currentTime > 0.15);
+    assert.ok(Math.abs(await top() - beforePlay) < 3, 'Playing a song preserves current list position');
+    await page.waitForTimeout(1300); assert.ok(Math.abs(await top() - beforePlay) < 3, 'Delayed metadata/lyrics do not scroll selected row');
+    await swipe('歌曲列表 - 播放中'); const tracksTop = await top();
+    check('真实 MP3 播放期间手势滚动和延迟位置保持', { beforePlay, afterPlayingSwipe: tracksTop });
+    await page.locator('#mobile-back').tap(); assert.ok(Math.abs(await top() - libraryTop) < 3, 'Back returns to prior library position');
+    await page.locator('#mobile-dock [data-route=search]').tap();
+    const timeBeforeSearch = await page.evaluate(() => audio.currentTime);
+    await page.locator('#mobile-search-query').fill('slow');
+    await page.locator('#mobile-search-form button[type=submit]').tap();
+    await page.getByRole('status').filter({ hasText: '正在搜索' }).waitFor();
+    await page.waitForFunction(() => document.querySelectorAll('#mobile-song-list .mobile-row').length === 100);
+    await swipe('搜索结果 - 播放中'); const searchTop = await top();
+    const queueBefore = await page.evaluate(() => playQueue.length);
+    const rowButton = await visibleSongButton(), row = rowButton.locator('..');
+    await row.getByRole('button', { name: /^加入队列 / }).tap();
+    assert.equal(await page.evaluate(() => playQueue.length), queueBefore + 1);
+    assert.equal(await page.evaluate(() => audio.paused), false);
+    assert.ok(await page.evaluate(() => audio.currentTime) > timeBeforeSearch);
+    await rowButton.tap(); await page.waitForFunction(() => audio && !audio.paused && audio.currentTime > 0.15);
+    assert.ok(Math.abs(await top() - searchTop) < 3, 'Play search result preserves search position');
+    await swipe('搜索结果 - 换曲后');
+    check('播放中搜索 / 加入队列 / 立即播放均保留浏览和实际播放');
+    await page.locator('#mobile-close').tap(); await page.locator('#mobile-dock [data-route=search]').tap();
+    assert.ok(await top() > searchTop, 'Reopen retains last search scroll position');
+    await page.locator('#mobile-search-query').fill('empty'); await page.locator('#mobile-search-form button[type=submit]').tap();
+    await page.getByRole('status').filter({ hasText: '没有找到歌曲' }).waitFor();
+    await page.locator('#mobile-search-query').fill('error'); await page.locator('#mobile-search-form button[type=submit]').tap();
+    await page.getByRole('status').filter({ hasText: '搜索失败' }).waitFor();
+    await page.locator('#mobile-panel').getByRole('button', { name: '清空', exact: true }).tap();
+    assert.equal(await page.locator('#mobile-search-query').inputValue(), '');
+    assert.equal(await page.locator('#mobile-song-list .mobile-row').count(), 0);
+    assert.equal(await page.evaluate(() => audio.paused), false);
+    check('搜索 loading / empty / error / clear 有明确反馈且不暂停');
+    await page.locator('#mobile-dock [data-route=queue]').tap(); await swipe('队列 - 播放中');
+    const queueTop = await top(); await (await visibleSongButton()).locator('..').getByRole('button', { name: /^移出 / }).tap();
+    assert.ok(Math.abs(await top() - queueTop) < 3); assert.equal(await page.locator('#mobile-song-list .mobile-row').count(), 99);
+    check('队列手势滚动及移除保留位置');
+    await page.locator('#mobile-dock [data-route=visual]').tap();
+    await page.locator('#mobile-preset').selectOption('2');
+    await page.locator('#mobile-quality').selectOption('eco');
+    assert.equal(await page.evaluate(() => playbackVisualPreset), 2); assert.equal(await page.evaluate(() => fx.performanceQuality), 'eco');
+    assert.equal(await page.evaluate(() => getAdaptiveRenderFps()), 24);
+    await page.locator('#mobile-mode').selectOption('diy'); assert.equal(await page.evaluate(() => diyPlayerMode), true);
+    await page.locator('#mobile-mode').selectOption('simple'); assert.equal(await page.evaluate(() => diyPlayerMode), false);
+    await page.locator('#mobile-visual-enabled').tap(); assert.equal(await page.evaluate(() => getAdaptiveRenderFps()), 2);
+    const priorTime = await page.evaluate(() => audio.currentTime); await page.waitForTimeout(450); assert.ok(await page.evaluate(() => audio.currentTime) > priorTime);
+    await page.locator('#mobile-visual-enabled').tap();
+    await page.locator('#mobile-background-color').fill('#123456'); await page.locator('#mobile-background-color').dispatchEvent('input');
+    assert.equal(await page.evaluate(() => fx.backgroundColor), '#123456');
+    await page.locator('#mobile-lyrics').tap(); assert.equal(await page.evaluate(() => fx.particleLyrics), false);
+    await page.locator('#mobile-eq-low').fill('5'); await page.locator('#mobile-eq-low').dispatchEvent('input');
+    await page.waitForFunction(() => Math.abs(audioEqualizerNodes.low.gain.value - 5) < 0.05);
+    await page.evaluate(() => switchPlaybackVisualToEmily()); assert.equal(await page.evaluate(() => fx.preset), 2);
+    check('真实视觉 / DIY与简约 / 预设优先 / 低负载 / 背景 / 歌词 / 浏览器音乐EQ');
+    await page.screenshot({ path: path.join(f.output, 'android-mobile-visual-phone.png') });
+    await page.setViewportSize({ width: 390, height: 430 });
+    await f.swipe('#mobile-scroll'); await f.swipe('#mobile-scroll');
+    const bounds = await page.locator('#mobile-panel').boundingBox(); assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= 430);
+    await page.locator('#mobile-close').tap(); await page.locator('#mobile-dock [data-route=search]').tap();
+    await page.locator('#mobile-search-query').fill('keyboard');
+    await page.screenshot({ path: path.join(f.output, 'android-mobile-keyboard-size.png') });
+    assert.equal(await page.locator('#mobile-search-query').isVisible(), true); assert.equal(await page.locator('#mobile-close').isVisible(), true);
+    check('390px 窄屏及430px可视高度时触摸设置/输入可达（视口缩小模拟键盘，非Android IME）');
+    await page.reload(); await page.waitForFunction(() => window.splashReadyToEnter === true); await page.locator('#splash').tap({ position: { x: 20, y: 60 } }); await page.waitForFunction(() => !document.body.classList.contains('splash-active'));
+    await page.locator('#mobile-dock [data-route=visual]').tap();
+    assert.equal(await page.locator('#mobile-preset').inputValue(), '2'); assert.equal(await page.locator('#mobile-quality').inputValue(), 'eco');
+    assert.equal(await page.locator('#mobile-background-color').inputValue(), '#123456');
+    assert.equal(await page.locator('#mobile-lyrics').getAttribute('aria-pressed'), 'false'); assert.equal(await page.locator('#mobile-eq-low').inputValue(), '5');
+    check('重载恢复显式预设/负载/背景/歌词/EQ设置');
+    await page.evaluate(() => { AndroidRuntime.isNative = true; window.mobileEqCalls = []; AndroidPlayback.getState = () => ({ eqSupported: false }); window.dispatchEvent(new CustomEvent('android-playback-state')); });
+    assert.equal(await page.locator('#mobile-eq-low').isDisabled(), true);
+    await page.getByRole('status').filter({ hasText: '此设备不支持原生 EQ' }).waitFor();
+    await page.evaluate(() => { AndroidPlayback.getState = () => ({ eqSupported: true }); AndroidPlayback.setEq = value => { mobileEqCalls.push(value); return Promise.resolve(); }; window.dispatchEvent(new CustomEvent('android-playback-state')); });
+    assert.equal(await page.locator('#mobile-eq-low').isEnabled(), true);
+    await page.locator('#mobile-eq-mid').fill('-3'); await page.locator('#mobile-eq-mid').dispatchEvent('input');
+    assert.deepEqual(await page.evaluate(() => mobileEqCalls.at(-1)), { low: 5, mid: -3, high: 0 });
+    check('原生EQ不支持时禁用/说明，支持时委托真实接口（模拟桥流程）');
+    assert.deepEqual(f.errors, []); assert.deepEqual(external, []);
+    const unexpectedConsole = f.consoleErrors.filter(line => !line.includes('503 (Service Unavailable)'));
+    assert.deepEqual(unexpectedConsole, []);
+    const result = { scope: 'Real Chromium CDP touch gestures and real generated MP3; service APIs/account/native EQ capability are MOCK. No native Android device or IME.', checks, gestures, errors: f.errors, expectedConsole: f.consoleErrors, externalRequests: external };
+    fs.writeFileSync(path.join(f.output, 'android-mobile-results.json'), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result, null, 2));
+  } catch (error) { await page.screenshot({ path: path.join(f.output, 'android-mobile-failure.png') }); console.error({ errorCount: f.errors.length, firstErrors: [...new Set(f.errors)].slice(0, 3), consoleErrors: f.consoleErrors }); throw error; }
+  finally { await f.close(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });

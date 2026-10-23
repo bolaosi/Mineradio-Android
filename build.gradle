@@ -12,6 +12,13 @@ buildscript {
 }
 
 allprojects {
+    // Optional external output keeps Windows test-worker classpaths ASCII while
+    // retaining the original checkout and all of its uncommitted changes.
+    def outputRoot = providers.gradleProperty('mineradioBuildRoot').orNull
+    if (outputRoot) {
+        def modulePath = project.path == ':' ? 'root' : project.path.substring(1).replace(':', '/')
+        layout.buildDirectory.set(new File(file(outputRoot), modulePath))
+    }
     repositories {
         google()
         mavenCentral()

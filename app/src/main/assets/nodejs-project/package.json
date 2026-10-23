@@ -4,10 +4,12 @@
     "private":  true,
     "main":  "server.js",
     "dependencies":  {
-                         "NeteaseCloudMusicApi":  "^4.32.0"
+                         "NeteaseCloudMusicApi":  "4.32.0"
                      },
     "scripts":  {
-                    "start":  "node server.js"
+                    "start":  "node server.js",
+                    "test": "node --test test/*.test.js",
+                    "check": "node --check server.js && node --check safe-logging.js && node --check ../android-online.js"
                 },
     "engines":  {
                     "node":  "\u003e=18"

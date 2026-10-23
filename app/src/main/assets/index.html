@@ -4,8 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Mineradio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2317231e'/%3E%3Ctext x='8' y='24' fill='%2300f5d4' font-size='25'%3E%E2%99%AA%3C/text%3E%3C/svg%3E">
 <meta name="referrer" content="no-referrer">
-<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Inter:wght@200;300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700;900&family=UnifrakturCook:wght@700&display=swap" rel="stylesheet">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: data: https:; connect-src 'self' https: blob: http://127.0.0.1:* http://localhost:*; worker-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+<script src="android-bootstrap.js"></script>
+<link rel="stylesheet" href="android-ui.css">
+<script src="android-qrcode.js"></script>
 <script src="vendor/three.r128.min.js"></script>
 <script src="vendor/music-tempo.min.js"></script>
 <script src="vendor/gsap.min.js"></script>
@@ -5510,7 +5514,7 @@ var particlePointerLocalHit = new THREE.Vector3();
 var particlePointerQuat = new THREE.Quaternion();
 var particlePointerFrame = { dirty:false, ndcX:0, ndcY:0 };
 var CLICK_THRESHOLD = 6;  // 像素, 拖动 > 6px 视为 drag
-var UI_HIT_SELECTOR = '#search-area,#top-right,#fullscreen-diy-zone,#fx-panel,#fx-fab,#fx-fab-hide-btn,#playlist-panel,#bottom-bar,#thumb-wrap,#empty-home,#visual-guide,#trial-banner,#source-fallback-notice,.modal-mask,#toast,#ai-depth-chip,#beat-chip,#drop-overlay';
+var UI_HIT_SELECTOR = '[data-mobile-ui],#android-local-panel,#search-area,#top-right,#fullscreen-diy-zone,#fx-panel,#fx-fab,#fx-fab-hide-btn,#playlist-panel,#bottom-bar,#thumb-wrap,#empty-home,#visual-guide,#trial-banner,#source-fallback-notice,.modal-mask,#toast,#ai-depth-chip,#beat-chip,#drop-overlay';
 
 function isPointerOverUi(e) {
   if (!e) return false;
@@ -5587,7 +5591,7 @@ window.addEventListener('mousedown', function(e){
   if (orbit.rotating || e.target === renderer.domElement) return;
   beginParticlePointerDrag(e);
 }, true);
-window.addEventListener('mousemove', function(e){
+function moveParticlePointerDrag(e) {
   updateControlsAutoHideFromPointer(e.clientX, e.clientY);
   idleGuidePointerMove(e);
   if (freeCamera && freeCamera.active) {
@@ -5625,7 +5629,8 @@ window.addEventListener('mousemove', function(e){
     if (orbit.recentering) orbit.recentering = false;
   }
   queueParticlePointerFrame(e.clientX, e.clientY);
-});
+}
+window.addEventListener('mousemove', moveParticlePointerDrag);
 window.addEventListener('mouseup', function(){
   orbit.rotating = false;
   particlePointerSpin.active = false;
@@ -12985,6 +12990,7 @@ function makeShelfManager() {
   var centerIdx = 0;          // 当前居中卡片 index (在 items 数组中的位置)
   var centerTarget = 0;       // 目标 centerIdx (插值)
   var centerSmooth = 0;       // 当前实际 centerIdx 平滑值
+  var hasBuiltCards = false;
   var openCardIdx = -1;       // 已打开内容框的卡片 (-1 表示无)
   var contentList = null;     // 二级 PSP 滚动列表 manager
   var connectorParticles = null;
@@ -13311,8 +13317,9 @@ function makeShelfManager() {
     lastSig = sig(allItems);
     lastCardRedrawAt = -10;
     lastCardPulseBucket = -1;
-    // center 起始 = currentIdx (如果是 queue), 否则 0
-    if (allItems.length && allItems[0].type === 'queue' && currentIdx >= 0) {
+    // Only locate the playing track on first construction. Cover/metadata updates must
+    // not reset a position the user is browsing (including during a finger drag).
+    if (!hasBuiltCards && allItems.length && allItems[0].type === 'queue' && currentIdx >= 0) {
       centerTarget = Math.min(allItems.length - 1, currentIdx);
       centerSmooth = centerTarget;
       centerIdx = centerTarget;
@@ -13320,6 +13327,7 @@ function makeShelfManager() {
       centerTarget = Math.max(0, allItems.length - 1);
       centerSmooth = centerTarget;
     }
+    hasBuiltCards = true;
     if (selectedIdx >= allItems.length) selectedIdx = -1;
     syncRenderedWindow(true, !!asyncCards);
     if (mode === 'stage') {
@@ -13779,6 +13787,7 @@ void main(){ vec4 t = texture2D(uDotTex, gl_PointCoord); if (t.a < 0.02) discard
     prev: function() { step(-1); },
     scrollBy: function(d) { step(d); },
     getCenterIdx: function() { return Math.round(centerSmooth); },
+    getScrollTarget: function() { return centerTarget; },
     getCardAt: function(idx) { return cards.find(function(c){ return c.index === idx; }); },
     getCards: function() { return cards; },
     playPlaylistAt: function(idx) {
@@ -14435,6 +14444,7 @@ function makeContentListManager() {
         return;
       }
       if (!open || token !== requestToken) return;
+      if (r && r.partial) showToast(r.message || ('本次仅载入 ' + (r.loaded || 0) + '/' + (r.total || 0) + ' 首'));
       try {
         // 清 loading
         disposeRows();
@@ -14587,6 +14597,7 @@ function makeContentListManager() {
     },
     getRows: function() { return rows; },
     getCenterIdx: function() { return Math.round(centerSmooth); },
+    getScrollTarget: function() { return centerTarget; },
     pulseRow: function(row, amount) {
       if (!row) return;
       pulseObjectValue(row, 'fxPulse', amount || 1, 0.42);
@@ -14717,9 +14728,9 @@ function makeContentListManager() {
       playQueueAt(playIndex, { preserveHomeState: true }).catch(function(e){
         console.warn('[ContentPlayRow]', e);
       });
-      // 关闭内容框
+      // On phones keep the browsed list open; playback must not require reopening it.
       var sm = shelfManager;
-      if (sm) safeShelfCloseContent('content-play-row');
+      if (sm && !document.documentElement.classList.contains('android-mobile')) safeShelfCloseContent('content-play-row');
     }
   };
 
@@ -15085,16 +15096,25 @@ async function apiJson(url, opts) {
   var fetchOpts = Object.assign({}, opts);
   delete fetchOpts.timeoutMs;
   var timer = null;
-  if (timeoutMs && window.AbortController && !fetchOpts.signal) {
+  var externalSignal = fetchOpts.signal, abortExternal = null;
+  if (timeoutMs && window.AbortController) {
     var controller = new AbortController();
+    if (externalSignal) {
+      abortExternal = function(){ controller.abort(); };
+      if (externalSignal.aborted) controller.abort();
+      else externalSignal.addEventListener('abort', abortExternal, { once: true });
+    }
     fetchOpts.signal = controller.signal;
     timer = setTimeout(function(){ controller.abort(); }, timeoutMs);
   }
   try {
     var res = await fetch(url, fetchOpts);
-    return res.json();
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error || ('HTTP ' + res.status));
+    return data;
   } finally {
     if (timer) clearTimeout(timer);
+    if (externalSignal && abortExternal) externalSignal.removeEventListener('abort', abortExternal);
   }
 }
 function escHtml(s){ var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -15374,12 +15394,16 @@ function beginListenSession(song, context) {
     maxProgress: 0,
   };
 }
-function updateListenStatsTick(force) {
+function updateListenStatsTick(force, finalizing) {
   if (!audio || !audio.duration || audio.paused) return;
   var song = currentCoverSong();
   if (!song) return;
   var key = queueItemKey(song);
-  if (!listenSession || listenSession.key !== key) beginListenSession(song, activeRadioContext);
+  if (!listenSession || listenSession.key !== key) {
+    // Closing the previous song must not recursively begin the newly selected song.
+    if (finalizing) return;
+    beginListenSession(song, activeRadioContext);
+  }
   if (!listenSession) return;
   var now = Date.now();
   var audioTime = isFinite(audio.currentTime) ? audio.currentTime : 0;
@@ -15394,7 +15418,7 @@ function updateListenStatsTick(force) {
 }
 function finalizeListenSession(completed) {
   if (!listenSession) return;
-  updateListenStatsTick(true);
+  updateListenStatsTick(true, true);
   var session = listenSession;
   listenSession = null;
   var effective = completed || session.listenMs >= 45000 || session.maxProgress >= 0.5 || (!audio || !audio.duration ? session.listenMs >= 30000 : false);
@@ -17725,6 +17749,14 @@ async function doSearch(q, opts) {
 // ============================================================
 //  音频上下文 & 频谱分析
 // ============================================================
+var audioEqualizerNodes = null;
+function setAudioEqualizer(values) {
+  if (!audioEqualizerNodes || !audioCtx) return;
+  ['low', 'mid', 'high'].forEach(function(band){
+    var gain = Math.max(-12, Math.min(12, Number(values && values[band]) || 0));
+    audioEqualizerNodes[band].gain.setTargetAtTime(gain, audioCtx.currentTime, 0.025);
+  });
+}
 function initAudio() {
   if (audioReady) return;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -17738,7 +17770,14 @@ function initAudio() {
   beatAnalyser.smoothingTimeConstant = 0.10;
   source.connect(analyser);
   source.connect(beatAnalyser);
-  analyser.connect(gainNode);
+  // Browser preview uses real EQ filters; AndroidPlayback replaces initAudio with its native engine.
+  audioEqualizerNodes = { low: audioCtx.createBiquadFilter(), mid: audioCtx.createBiquadFilter(), high: audioCtx.createBiquadFilter() };
+  audioEqualizerNodes.low.type = 'lowshelf'; audioEqualizerNodes.low.frequency.value = 180;
+  audioEqualizerNodes.mid.type = 'peaking'; audioEqualizerNodes.mid.frequency.value = 1000; audioEqualizerNodes.mid.Q.value = 0.8;
+  audioEqualizerNodes.high.type = 'highshelf'; audioEqualizerNodes.high.frequency.value = 4500;
+  analyser.connect(audioEqualizerNodes.low); audioEqualizerNodes.low.connect(audioEqualizerNodes.mid);
+  audioEqualizerNodes.mid.connect(audioEqualizerNodes.high); audioEqualizerNodes.high.connect(gainNode);
+  if (window.AndroidMobile) setAudioEqualizer(window.AndroidMobile.getPreferences().eq);
   gainNode.connect(audioCtx.destination);
   applyVolumeToAudio();
   frequencyData.fill(0);
@@ -19177,6 +19216,8 @@ function animateListItems(container, selector, opts) {
 function smoothScrollToItem(scroller, item, opts) {
   if (!scroller || !item) return;
   opts = opts || {};
+  // Touch browsing owns its scroll position; desktop auto-locate must not fight a finger drag.
+  if (document.documentElement.classList.contains('android-mobile') && !opts.force) return;
   var target = item.offsetTop - Math.max(0, (scroller.clientHeight - item.offsetHeight) * (opts.align == null ? 0.42 : opts.align));
   target = Math.max(0, Math.min(target, Math.max(0, scroller.scrollHeight - scroller.clientHeight)));
   if (window.gsap) {
@@ -19267,7 +19308,7 @@ function togglePlaylistPanel(force) {
     scheduleUiWarmTask(function(){
       flushDeferredQueuePanel('playlist-panel-open');
       if (!playQueue.length && queueViewTab === 'queue') switchPlaylistTab('playlists');
-      if (playQueue.length && currentIdx >= 0 && queueViewTab !== 'queue') switchPlaylistTab('queue');
+      if (!document.documentElement.classList.contains('android-mobile') && playQueue.length && currentIdx >= 0 && queueViewTab !== 'queue') switchPlaylistTab('queue');
       if (queueViewTab === 'queue') animateVisiblePanelList(document.getElementById('queue-list'), '.queue-item', el, '.queue-item.now', { scrollActive: false });
       else if (queueViewTab === 'playlists') animateVisiblePanelList(document.getElementById('pl-list'), '.pl-card', el);
       else animateVisiblePanelList(document.getElementById('podcast-list'), '.pl-card', el);
@@ -19550,6 +19591,7 @@ async function openPlaylistPanelDetail(provider, pid, title) {
       ? await apiJson('/api/qq/playlist/tracks?id=' + encodeURIComponent(pid))
       : await apiJson('/api/playlist/tracks?id=' + encodeURIComponent(pid));
     if (playlistPanelDetailState.token !== token) return;
+    if (r && r.partial) showToast(r.message || ('本次仅载入 ' + (r.loaded || 0) + '/' + (r.total || 0) + ' 首'));
     playlistPanelDetailState.loading = false;
     playlistPanelDetailState.tracks = (r && r.tracks || []).map(cloneSong);
     playlistPanelDetailState.renderLimit = Math.min(playlistPanelDetailState.tracks.length, PLAYLIST_DETAIL_INITIAL_RENDER);
@@ -19578,7 +19620,7 @@ function playPlaylistPanelDetailTrack(index) {
   playQueue = tracks.map(cloneSong);
   currentIdx = index;
   safeRenderQueuePanel('playlist-panel-detail');
-  safeSwitchPlaylistTab('queue', 'playlist-panel-detail');
+  if (!document.documentElement.classList.contains('android-mobile')) safeSwitchPlaylistTab('queue', 'playlist-panel-detail');
   safeShelfRebuild('playlist-panel-detail', true);
   forcePlaybackControlsInteractive();
   playQueueAt(index).catch(function(e){ console.warn('[PlaylistPanelDetailPlay]', e); });
@@ -19861,7 +19903,7 @@ async function loadPlaylistIntoQueueById(id, autoplay, title) {
     if (!qqPlaylistId) syncLikeStatusForSongs(playQueue);
     currentIdx = 0;
     safeRenderQueuePanel('playlist-load');
-    safeSwitchPlaylistTab('queue', 'playlist-load');
+    if (!document.documentElement.classList.contains('android-mobile')) safeSwitchPlaylistTab('queue', 'playlist-load');
     safeShelfRebuild('playlist-load', true);
     forcePlaybackControlsInteractive();
     if (autoplay) {
@@ -19873,7 +19915,7 @@ async function loadPlaylistIntoQueueById(id, autoplay, title) {
       }
     }
     forcePlaybackControlsInteractive();
-    showToast('载入: ' + (title || ('歌单 ' + id)));
+    showToast(r.partial ? r.message || ('本次仅载入 ' + (r.loaded || 0) + '/' + (r.total || 0) + ' 首') : '载入: ' + (title || ('歌单 ' + id)));
   } catch (e) {
     console.warn('[PlaylistLoadState]', id, e);
     forcePlaybackControlsInteractive();
@@ -23676,22 +23718,23 @@ async function checkQr() {
     if (r.code === 800) { $st.textContent = '二维码已过期, 请刷新'; $st.className = 'fail'; stopQrPoll(); }
     else if (r.code === 801) { $st.textContent = '请在 App 中扫码'; $st.className = ''; }
     else if (r.code === 802) { $st.textContent = '已扫码, 请在手机确认…'; $st.className = 'scan'; }
-    else if (r.code === 803 && (r.loggedIn || r.hasCookie)) {
-      $st.textContent = r.pendingProfile ? '登录成功，正在同步账号资料…' : '登录成功！'; $st.className = 'scan';
+    else if (r.code === 803 && r.loggedIn === true && r.verified === true) {
+      $st.textContent = '账号已验证，正在同步资料…'; $st.className = 'scan';
       stopQrPoll();
-      loginStatus = r.loggedIn ? r : Object.assign({}, r, { loggedIn: true, pendingProfile: true, nickname: r.nickname || '网易云用户' });
+      loginStatus = r;
       activeAccountProvider = 'netease';
       renderUserBtn();
       setTimeout(async function(){
         var fresh = await refreshLoginStatus(true);
         if (!fresh || !fresh.loggedIn) {
-          loginStatus = Object.assign({}, loginStatus, { loggedIn: true, pendingProfile: true });
+          loginStatus = { loggedIn: false, pendingProfile: true };
           renderUserBtn();
-          fresh = loginStatus;
+          $st.textContent = '凭据已接收，但账号验证未通过，请重试';
+          return;
         }
         closeLoginModal();
         showToast('欢迎 ' + (fresh && fresh.nickname ? fresh.nickname : ''));
-      }, r.pendingProfile ? 1200 : 500);
+      }, 500);
     } else if (r.code === 803) {
       $st.textContent = '扫码已确认，但没有拿到登录凭证，请刷新二维码重试'; $st.className = 'fail';
       stopQrPoll();
@@ -23785,7 +23828,7 @@ function openProviderLogin(provider) {
 }
 async function logoutActiveAccount() {
   if (activeAccountProvider === 'qq') {
-    try { await apiJson('/api/qq/logout'); } catch (e) {}
+    try { await apiJson('/api/qq/logout', { method: 'POST' }); } catch (e) { showToast('退出失败，请检查后端连接'); return; }
     try {
       if (window.desktopWindow && typeof window.desktopWindow.clearQQMusicLogin === 'function') {
         await window.desktopWindow.clearQQMusicLogin();
@@ -23805,7 +23848,7 @@ async function logoutActiveAccount() {
   doLogout();
 }
 async function doLogout() {
-  await apiJson('/api/logout');
+  await apiJson('/api/logout', { method: 'POST' });
   try {
     if (window.desktopWindow && typeof window.desktopWindow.clearNeteaseMusicLogin === 'function') {
       await window.desktopWindow.clearNeteaseMusicLogin();
@@ -25251,7 +25294,7 @@ function setPeek(el, on, key) {
     if (peekTimers[key]) { clearTimeout(peekTimers[key]); peekTimers[key] = null; }
     if (key === 'fx') el.classList.remove('closing');
     if (key === 'pl' && !wasPeek && !playQueue.length && queueViewTab === 'queue') switchPlaylistTab('playlists');
-    if (key === 'pl' && !wasPeek && playQueue.length && currentIdx >= 0) {
+    if (key === 'pl' && !wasPeek && playQueue.length && currentIdx >= 0 && !document.documentElement.classList.contains('android-mobile')) {
       if (el.dataset && el.dataset.preserveTabOnOpen === '1') delete el.dataset.preserveTabOnOpen;
       else if (queueViewTab !== 'queue') switchPlaylistTab('queue');
       scrollPlaylistPanelToCurrent();
@@ -25425,6 +25468,8 @@ function isPlaylistPanelFocusActive(inTrigger, inPanel, pp, ex, ppRect) {
   return inTrigger || inPanel || (pp && pp.classList.contains('peek') && ex < ppRect.right + playlistPanelFocusPadding());
 }
 window.addEventListener('mousemove', function(e){
+  // Android's compatibility mouse events are not hover intent. Keep touch panels explicit.
+  if (document.documentElement.classList.contains('android-mobile') || (e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents)) return;
   var sa = document.getElementById('search-area');
   var fp = document.getElementById('fx-panel');
   var pp = document.getElementById('playlist-panel');
@@ -26523,7 +26568,11 @@ if (fx.floatLayer) createFloatLayer();
 if (fx.particleLyrics) createLyricsParticles();
 if (fx.backCover) createBackCoverLayer();
 initIdleGuideCanvas();
-var startupLoginStatusPromise = Promise.all([refreshLoginStatus(), refreshQQLoginStatus()]);
+var startupLoginStatusPromise = new Promise(function(resolve) {
+  document.addEventListener('DOMContentLoaded', function() {
+    Promise.all([refreshLoginStatus(), refreshQQLoginStatus()]).then(resolve);
+  }, { once: true });
+});
 startQQLoginStatusAutoRefresh();
 if (startupLoginStatusPromise && startupLoginStatusPromise.then) {
   startupLoginStatusPromise.then(function(){
@@ -26559,7 +26608,8 @@ safeRenderQueuePanel('startup');
 updateCustomCoverButton();
 updateCustomLyricControls();
 updateLikeButtons();
-setTimeout(initUpdatePreview, 9000);
+// APK updates are installed by Android; desktop executable/patch APIs are disabled.
+if (!window.AndroidRuntime) setTimeout(initUpdatePreview, 9000);
 
 // ============================================================
 //  主循环
@@ -26581,6 +26631,11 @@ function isMainSceneCoveredBySplash() {
 }
 function getAdaptiveRenderFps() {
   if (isDeepBackgroundMode()) return 1;
+  if (window.AndroidMobile) {
+    if (!window.AndroidMobile.isVisualEnabled()) return 2;
+    if (fx.performanceQuality === 'eco') return 24;
+    if (fx.performanceQuality === 'balanced') return 40;
+  }
   if (RENDER_VISIBLE_VSYNC) return 0;
   var tier = (typeof getRenderLoadTier === 'function') ? getRenderLoadTier() : 0;
   if (typeof isRenderInteractionActive === 'function' && isRenderInteractionActive()) {
@@ -26875,5 +26930,11 @@ function animate() {
 }
 animate();
 </script>
+<script src="android-online.js"></script>
+<script src="android-qq-login.js"></script>
+<script src="android-playback.js"></script>
+<script src="android-local.js"></script>
+<script src="android-mobile.js"></script>
+<script src="android-touch.js"></script>
 </body>
 </html>

@@ -1,0 +1,42 @@
+/* Shared by the original online-status action and all five mobile navigation actions. */
+#android-online-button.android-glass-action,
+#mobile-dock .android-glass-action {
+  box-sizing:border-box;
+  min-height:44px;
+  border:1px solid rgba(163,177,134,.55);
+  border-radius:12px;
+  background:rgba(32,43,37,.58);
+  color:#fff;
+  font:14px sans-serif;
+  text-shadow:0 1px 3px rgba(0,0,0,.9);
+  box-shadow:0 4px 14px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.08);
+  touch-action:manipulation;
+  transition:background-color .15s,border-color .15s,box-shadow .15s;
+}
+#android-online-button.android-glass-action:active,
+#mobile-dock .android-glass-action:active,
+#mobile-dock .android-glass-action[aria-pressed=true] {
+  background:rgba(61,79,62,.64);
+  border-color:rgba(211,231,184,.9);
+  box-shadow:0 4px 14px rgba(0,0,0,.18),inset 0 0 0 1px rgba(211,231,184,.15);
+}
+#android-online-button.android-glass-action:focus-visible,
+#mobile-dock .android-glass-action:focus-visible {outline:2px solid #d3e7b8;outline-offset:2px}
+#mobile-dock {background:rgba(32,43,37,.10);border:1px solid rgba(163,177,134,.18);box-shadow:0 4px 18px rgba(0,0,0,.12)}
+@supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) {
+  #android-online-button.android-glass-action,#mobile-dock .android-glass-action {
+    background:rgba(32,43,37,.36);
+    backdrop-filter:blur(12px) saturate(115%);
+    -webkit-backdrop-filter:blur(12px) saturate(115%);
+  }
+  #android-online-button.android-glass-action:active,#mobile-dock .android-glass-action:active,
+  #mobile-dock .android-glass-action[aria-pressed=true] {background:rgba(61,79,62,.54)}
+}
+@media (prefers-reduced-transparency:reduce) {
+  #android-online-button.android-glass-action,#mobile-dock .android-glass-action {
+    background:rgba(32,43,37,.88);backdrop-filter:none;-webkit-backdrop-filter:none;
+  }
+}
+@media (prefers-reduced-motion:reduce) {
+  #android-online-button.android-glass-action,#mobile-dock .android-glass-action {transition:none}
+}

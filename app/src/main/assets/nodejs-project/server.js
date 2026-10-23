@@ -5,6 +5,7 @@
 //  - 试听检测 (freeTrialInfo) + 全 quality 探测
 //  - 所有受保护 API 都会带上已登录用户的 cookie
 // ====================================================================
+require('./safe-logging').installNeteaseLogFilter(console);
 const {
   search,
   cloudsearch,
@@ -55,7 +56,10 @@ const { fileURLToPath } = require('url');
 const { analyzePodcastDjStream, analyzePodcastDjIntro } = require('./dj-analyzer');
 
 const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || '0.0.0.0';
+const HOST = process.env.HOST || '127.0.0.1';
+const API_TOKEN = String(process.env.MINERADIO_API_TOKEN || '');
+if (API_TOKEN.length < 32) throw new Error('MINERADIO_API_TOKEN must contain at least 32 characters');
+const ALLOWED_ORIGINS = new Set(String(process.env.MINERADIO_ALLOWED_ORIGINS || 'https://mineradio.local').split(',').map(s => s.trim()).filter(Boolean));
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const COOKIE_FILE = process.env.COOKIE_FILE || path.join(__dirname, '.cookie');
 const QQ_COOKIE_FILE = process.env.QQ_COOKIE_FILE || path.join(__dirname, '.qq-cookie');
@@ -102,7 +106,7 @@ function applySystemCertificateAuthorities() {
     });
     if (merged.length > bundled.length) tls.setDefaultCACertificates(merged);
   } catch (e) {
-    console.warn('[TLS] system CA merge skipped:', e.message);
+    console.warn('[TLS] system CA merge skipped:', safeFailure(e));
   }
 }
 
@@ -173,17 +177,24 @@ function rawCookieFallback(input) {
 let userCookie = '';
 try { if (fs.existsSync(COOKIE_FILE)) userCookie = fs.readFileSync(COOKIE_FILE, 'utf8').trim(); }
 catch (e) { userCookie = ''; }
+function persistCredential(file, value) {
+  const temporary = file + '.tmp';
+  fs.writeFileSync(temporary, value, { mode: 0o600 });
+  fs.renameSync(temporary, file);
+}
 function saveCookie(c) {
-  userCookie = normalizeCookieHeader(c) || rawCookieFallback(c);
-  try { fs.writeFileSync(COOKIE_FILE, userCookie); } catch (e) {}
+  const next = normalizeCookieHeader(c) || rawCookieFallback(c);
+  persistCredential(COOKIE_FILE, next);
+  userCookie = next;
 }
 
 let qqCookie = '';
 try { if (fs.existsSync(QQ_COOKIE_FILE)) qqCookie = fs.readFileSync(QQ_COOKIE_FILE, 'utf8').trim(); }
 catch (e) { qqCookie = ''; }
 function saveQQCookie(c) {
-  qqCookie = normalizeCookieHeader(c) || rawCookieFallback(c);
-  try { fs.writeFileSync(QQ_COOKIE_FILE, qqCookie); } catch (e) {}
+  const next = normalizeCookieHeader(c) || rawCookieFallback(c);
+  persistCredential(QQ_COOKIE_FILE, next);
+  qqCookie = next;
 }
 
 // ---------- 工具 ----------
@@ -198,12 +209,17 @@ function serveStatic(res, filePath) {
 function sendJSON(res, data, status) {
   res.writeHead(status || 200, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
     'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
     'Pragma': 'no-cache',
     'Expires': '0',
   });
   res.end(JSON.stringify(data));
+}
+// Never serialize upstream Error objects or messages: HTTP client errors can
+// retain request headers, cookies and response bodies.
+function safeFailure(error) {
+  const code = error && error.code;
+  return ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ABORT_ERR', 'ERR_NETWORK'].includes(code) ? code : 'UPSTREAM_FAILED';
 }
 function readPackageInfo() {
   try {
@@ -916,7 +932,7 @@ function moveInvalidUpdateFile(filePath, reason) {
     fs.renameSync(filePath, invalidPath);
     console.warn('[UpdateDownload] cached installer moved aside:', reason || 'invalid', invalidPath);
   } catch (e) {
-    console.warn('[UpdateDownload] failed to move invalid cached installer:', e.message);
+    console.warn('[UpdateDownload] failed to move invalid cached installer:', safeFailure(e));
   }
 }
 function reuseVerifiedInstallerJob(opts) {
@@ -1660,7 +1676,7 @@ async function handleSearch(keywords, limit) {
         if (pic) idToPic[s.id] = pic;
       });
       mapped = mapped.map(s => s.cover ? s : { ...s, cover: idToPic[s.id] || '' });
-    } catch (e) { console.warn('[Search] backfill failed:', e.message); }
+    } catch (e) { console.warn('[Search] backfill failed:', safeFailure(e)); }
   }
 
   return mapped;
@@ -2085,7 +2101,7 @@ async function fetchWeatherPlaylistSongs(playlist, limit) {
       rawTracks = (all.body && (all.body.songs || all.body.tracks)) || [];
     }
   } catch (e) {
-    console.warn('[WeatherRadio] playlist_track_all failed:', playlist && playlist.name, e.message);
+    console.warn('[WeatherRadio] playlist_track_all failed:', playlist && playlist.name, safeFailure(e));
   }
   if (!rawTracks.length && typeof playlist_detail === 'function') {
     try {
@@ -2093,7 +2109,7 @@ async function fetchWeatherPlaylistSongs(playlist, limit) {
       const pl = (detail.body && detail.body.playlist) || {};
       rawTracks = pl.tracks || [];
     } catch (e) {
-      console.warn('[WeatherRadio] playlist_detail failed:', playlist && playlist.name, e.message);
+      console.warn('[WeatherRadio] playlist_detail failed:', playlist && playlist.name, safeFailure(e));
     }
   }
   return rawTracks.map(mapSongRecord).filter(song => song.id && song.name).slice(0, limit || 36);
@@ -2113,7 +2129,7 @@ async function filterLikelyPlayableWeatherSongs(songs) {
     }));
     settled.forEach((result, idx) => {
       if (result.status === 'fulfilled' && result.value) playable.push(result.value);
-      else if (result.status === 'rejected') console.warn('[WeatherRadio] playable probe failed:', chunk[idx] && chunk[idx].name, result.reason && result.reason.message);
+      else if (result.status === 'rejected') console.warn('[WeatherRadio] playable probe failed:', chunk[idx] && chunk[idx].name, safeFailure(result.reason));
     });
     if (playable.length >= 12) break;
   }
@@ -2206,7 +2222,7 @@ async function buildWeatherRadio(params) {
   try {
     weather = await fetchOpenMeteoWeather(params);
   } catch (e) {
-    console.warn('[WeatherRadio] weather provider failed, using fallback radio:', e.message);
+    console.warn('[WeatherRadio] weather provider failed, using fallback radio:', safeFailure(e));
     weather = fallbackWeatherForRadio(params, e);
   }
   const queries = weatherRadioSeedQueries(weather.mood);
@@ -2280,7 +2296,7 @@ function normalizeQQProfile(body, cookieObj) {
   }
   return {
     provider: 'qq',
-    loggedIn: !!(uin && qqCookieMusicKey(cookieObj)),
+    loggedIn: false,
     preview: false,
     userId: uin,
     nickname: nick || (uin ? ('QQ ' + uin) : 'QQ 音乐'),
@@ -2292,38 +2308,36 @@ function normalizeQQProfile(body, cookieObj) {
   };
 }
 
-async function getQQLoginInfo() {
-  const cookieObj = qqCookieObject();
+async function getQQLoginInfo(candidate) {
+  const credential = candidate === undefined ? qqCookie : candidate;
+  const cookieObj = parseCookieString(credential);
   const uin = qqCookieUin(cookieObj);
   const musicKey = qqCookieMusicKey(cookieObj);
-  if (!uin || !musicKey) return { provider: 'qq', loggedIn: false, hasCookie: !!qqCookie };
-  const fallback = normalizeQQProfile(null, cookieObj);
+  const unverified = { provider: 'qq', loggedIn: false, verified: false, hasCookie: !!credential, credentialState: credential ? 'unverified' : 'missing' };
+  if (!uin || !musicKey) return { ...unverified, credentialState: credential ? 'invalid' : 'missing' };
   try {
-    const u = new URL('https://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg');
-    u.searchParams.set('cid', '205360838');
-    u.searchParams.set('userid', uin);
-    u.searchParams.set('reqfrom', '1');
-    u.searchParams.set('g_tk', '5381');
-    u.searchParams.set('loginUin', uin);
-    u.searchParams.set('hostUin', '0');
-    u.searchParams.set('format', 'json');
-    u.searchParams.set('inCharset', 'utf8');
-    u.searchParams.set('outCharset', 'utf-8');
-    u.searchParams.set('notice', '0');
-    u.searchParams.set('platform', 'yqq.json');
-    u.searchParams.set('needNewCode', '0');
-    const text = await requestText(u.toString(), {
-      headers: { ...QQ_HEADERS, Cookie: qqCookie },
+    // This endpoint queries the authenticated user; a public profile queried by
+    // userid can succeed even with an expired/fabricated cookie.
+    const payload = JSON.stringify({
+      comm: { uin, format: 'json', ct: 24, cv: 0 },
+      nick: { module: 'music.UserInfo.userInfoServer', method: 'GetLoginUserInfo', param: {} },
     });
+    const text = await requestText(QQ_MUSICU_URL, {
+      method: 'POST', headers: { ...QQ_HEADERS, Cookie: credential, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+    }, payload);
     const body = parseJSONText(text);
-    const info = normalizeQQProfile(body, cookieObj);
-    if (body && (body.code === 1000 || body.result === 301)) {
-      return { ...fallback, profileUnavailable: true };
+    const result = body && body.nick;
+    const profile = result && result.data && result.data.info;
+    const returnedUin = profile && (profile.uin || profile.musicid || profile.musicId);
+    if (Number(body.code) !== 0 || !result || Number(result.code) !== 0 || !profile || !profile.nick ||
+        (returnedUin && normalizeQQUin(returnedUin) !== uin)) {
+      return { ...unverified, credentialState: 'invalid', message: 'QQ 登录凭据无效、不完整或官方验证接口不可用' };
     }
-    return info;
+    const info = normalizeQQProfile({ data: profile }, cookieObj);
+    return { ...info, nickname: String(profile.nick), loggedIn: true, verified: true, hasCookie: true, credentialState: 'verified', profileSource: 'authenticated-user' };
   } catch (e) {
-    console.warn('[QQLogin] profile check failed:', e.message);
-    return { ...fallback, profileUnavailable: true };
+    console.warn('[QQLogin] authenticated account validation failed');
+    return { ...unverified, message: 'QQ 官方验证暂时失败，请检查网络后重试' };
   }
 }
 
@@ -2636,7 +2650,7 @@ async function handleQQSearch(keywords, limit) {
   const detailed = await Promise.all(base.map(async item => {
     try { return await qqSongDetail(item.mid, item); }
     catch (e) {
-      console.warn('[QQSearch] detail failed:', item.mid, e.message);
+      console.warn('[QQSearch] detail failed:', item.mid, safeFailure(e));
       return item;
     }
   }));
@@ -2751,7 +2765,7 @@ async function handleQQSongComments(id, mid, limit, offset) {
       const detail = await qqSongDetail(mid, { mid });
       topid = String((detail && (detail.qqId || detail.id)) || '').replace(/\D/g, '');
     } catch (e) {
-      console.warn('[QQComments] detail fallback failed:', e.message);
+      console.warn('[QQComments] detail fallback failed:', safeFailure(e));
     }
   }
   if (!topid) return { provider: 'qq', error: 'Missing QQ song id', comments: [] };
@@ -2806,7 +2820,7 @@ function decodeQQLyricText(text) {
       const decoded = Buffer.from(compact, 'base64').toString('utf8').replace(/^\uFEFF/, '');
       if (decoded && (decoded.includes('[') || /[\u4e00-\u9fa5]/.test(decoded))) raw = decoded;
     } catch (e) {
-      console.warn('[QQLyric] base64 decode failed:', e.message);
+      console.warn('[QQLyric] base64 decode failed:', safeFailure(e));
     }
   }
   return decodeHtmlEntities(raw).replace(/\r\n/g, '\n').trim();
@@ -2846,7 +2860,7 @@ async function handleQQLyric(mid, id) {
     qrcText = decodeQQLyricText(data && data.qrc);
     romaText = decodeQQLyricText(data && data.roma);
   } catch (e) {
-    console.warn('[QQLyric] musicu failed:', e.message);
+    console.warn('[QQLyric] musicu failed:', safeFailure(e));
   }
 
   if (!lyricText && songMID) {
@@ -2869,7 +2883,7 @@ async function handleQQLyric(mid, id) {
       transText = decodeQQLyricText(body && (body.trans || body.tlyric)) || transText;
       source = 'qq-legacy';
     } catch (e) {
-      console.warn('[QQLyric] legacy failed:', e.message);
+      console.warn('[QQLyric] legacy failed:', safeFailure(e));
     }
   }
 
@@ -3022,14 +3036,14 @@ async function fetchMyPodcastItems(key, info, limit, offset) {
       const sati = await sati_resource_sub_list({ cookie: userCookie, timestamp: Date.now() });
       raw = firstArrayFrom(sati.body, ['data', 'resources', 'list']);
     } catch (e) {
-      console.warn('[MyPodcastLiked] sati sub list failed:', e.message);
+      console.warn('[MyPodcastLiked] sati sub list failed:', safeFailure(e));
     }
     if (!raw.length) {
       try {
         const recent = await record_recent_voice({ limit, cookie: userCookie, timestamp: Date.now() });
         raw = firstArrayFrom(recent.body, ['data', 'list', 'resources']);
       } catch (e) {
-        console.warn('[MyPodcastLiked] recent voice fallback failed:', e.message);
+        console.warn('[MyPodcastLiked] recent voice fallback failed:', safeFailure(e));
       }
     }
     return { itemType: 'voice', items: raw.map(mapPodcastVoice).filter(x => x.id && x.name) };
@@ -3083,7 +3097,7 @@ async function handleSongUrl(id, loginInfo, qualityPreference) {
       }
     } catch (err) {
       lastError = err;
-      console.log('[SongUrl]', q.level, 'failed:', err.message);
+      console.log('[SongUrl]', q.level, 'failed:', safeFailure(err));
     }
   }
   if (trialFallback) return trialFallback;
@@ -3194,10 +3208,12 @@ function normalizeLoginInfo(profile, account, extra) {
   profile = profile || {};
   account = account || {};
   const userId = profile.userId || profile.user_id || profile.id || account.userId || account.id || '';
-  if (!(userId || userId === 0)) return { loggedIn: false };
+  if (!/^\d+$/.test(String(userId)) || Number(userId) <= 0) return { loggedIn: false, verified: false };
   const vip = normalizeNeteaseVip(profile, account, extra);
   return {
     loggedIn: true,
+    verified: true,
+    credentialState: 'verified',
     userId,
     nickname: profile.nickname || profile.userName || '网易云用户',
     avatar: profile.avatarUrl || profile.avatar || '',
@@ -3210,30 +3226,36 @@ function isNeteaseAuthInvalidPayload(payload) {
   const msg = normalizeApiMessage(payload);
   return /未登录|需要登录|请先登录|login/i.test(msg) && code >= 300;
 }
-async function getLoginInfo() {
-  if (!userCookie) return { loggedIn: false, vipType: 0, vipLevel: 'none', isVip: false, isSvip: false, vipLabel: '无VIP' };
+function isNeteaseAccountResponseOK(response) {
+  const body = response && response.body || {};
+  const data = body.data || body;
+  return Number(data.code || body.code || response.status) === 200;
+}
+async function getLoginInfo(candidate) {
+  const credential = candidate === undefined ? userCookie : candidate;
+  const unverified = { loggedIn: false, verified: false, hasCookie: !!credential, credentialState: credential ? 'unverified' : 'missing', vipType: 0, vipLevel: 'none', isVip: false, isSvip: false, vipLabel: '无VIP' };
+  if (!credential) return unverified;
 
   // login_status 对二维码 cookie 的资料刷新通常更及时；失败时再降级到 user_account。
   try {
-    const st = await login_status({ cookie: userCookie, timestamp: Date.now() });
+    const st = await login_status({ cookie: credential, timestamp: Date.now() });
     const body = st.body || {};
     const data = body.data || body;
     const info = normalizeLoginInfo(data.profile || body.profile, data.account || body.account, data);
-    if (info.loggedIn) return info;
+    if (isNeteaseAccountResponseOK(st) && info.loggedIn) return { ...info, hasCookie: true };
   } catch (e) {
-    console.warn('[Login] login_status failed:', e.message);
+    console.warn('[Login] login_status validation failed');
   }
 
   try {
-    const acc = await user_account({ cookie: userCookie, timestamp: Date.now() });
+    const acc = await user_account({ cookie: credential, timestamp: Date.now() });
     const body = acc.body || {};
     const info = normalizeLoginInfo(body.profile, body.account, body);
-    if (info.loggedIn) return info;
-    if (isNeteaseAuthInvalidPayload(acc)) saveCookie('');
-    return { loggedIn: false, hasCookie: !!userCookie, vipType: 0, vipLevel: 'none', isVip: false, isSvip: false, vipLabel: '无VIP' };
+    if (isNeteaseAccountResponseOK(acc) && info.loggedIn) return { ...info, hasCookie: true };
+    return { ...unverified, credentialState: isNeteaseAuthInvalidPayload(acc) ? 'invalid' : 'unverified' };
   } catch (e) {
-    console.warn('[Login] account check failed:', e.message);
-    return { loggedIn: false, hasCookie: !!userCookie, vipType: 0, vipLevel: 'none', isVip: false, isSvip: false, vipLabel: '无VIP' };
+    console.warn('[Login] account validation failed');
+    return unverified;
   }
 }
 
@@ -3241,12 +3263,31 @@ async function getLoginInfo() {
 //  HTTP Server
 // ====================================================================
 const server = http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  if (origin && !ALLOWED_ORIGINS.has(origin)) { sendJSON(res, { error: 'ORIGIN_DENIED' }, 403); return; }
+  if (origin) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin'); }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Range');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
   const url = new URL(req.url, 'http://localhost:' + PORT);
   const pn = url.pathname;
+  const supplied = Buffer.from(String(req.headers.authorization || '').replace(/^Bearer /, ''));
+  const expected = Buffer.from(API_TOKEN);
+  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
+    sendJSON(res, { error: 'UNAUTHORIZED', message: '后端访问令牌错误或未设置' }, 401); return;
+  }
+  if (req.method !== 'GET' && req.method !== 'POST') { sendJSON(res, { error: 'METHOD_NOT_ALLOWED' }, 405); return; }
+  if (pn === '/api/health') {
+    sendJSON(res, { ok: true, service: 'mineradio', apiVersion: 1, mode: 'single-user', authRequired: true }); return;
+  }
+  // Desktop installer/patch APIs write executable files and are not an Android
+  // remote administration interface. Disable them regardless of authentication.
+  if (pn.startsWith('/api/update/') || pn.startsWith('/api/beatmap/cache')) {
+    sendJSON(res, { error: 'DISABLED_ON_REMOTE_BACKEND' }, 403); return;
+  }
+  if (['/api/login/cookie', '/api/qq/login/cookie', '/api/logout', '/api/qq/logout'].includes(pn) && req.method !== 'POST') {
+    sendJSON(res, { error: 'POST_REQUIRED' }, 405); return;
+  }
 
   if (pn === '/api/app/version') {
     sendJSON(res, {
@@ -3271,7 +3312,7 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       sendJSON(res, {
         ...localUpdateFallback(err.message || 'Update check failed', { configured: UPDATE_CONFIG.configured }),
-        error: err.message || 'Update check failed',
+        error: safeFailure(err) || 'Update check failed',
       });
     }
     return;
@@ -3283,8 +3324,8 @@ const server = http.createServer(async (req, res) => {
       const job = startUpdateDownloadJob(info);
       sendJSON(res, job, job.ok ? 200 : 400);
     } catch (err) {
-      console.error('[UpdateDownload]', err);
-      sendJSON(res, { ok: false, error: err.message || 'UPDATE_DOWNLOAD_START_FAILED' }, 500);
+      console.error('[UpdateDownload]' + ' upstream request failed');
+      sendJSON(res, { ok: false, error: safeFailure(err) || 'UPDATE_DOWNLOAD_START_FAILED' }, 500);
     }
     return;
   }
@@ -3304,8 +3345,8 @@ const server = http.createServer(async (req, res) => {
       const job = startUpdatePatchJob(info);
       sendJSON(res, job, job.ok ? 200 : 400);
     } catch (err) {
-      console.error('[UpdatePatch]', err);
-      sendJSON(res, { ok: false, error: err.message || 'UPDATE_PATCH_START_FAILED' }, 500);
+      console.error('[UpdatePatch]' + ' upstream request failed');
+      sendJSON(res, { ok: false, error: safeFailure(err) || 'UPDATE_PATCH_START_FAILED' }, 500);
     }
     return;
   }
@@ -3379,8 +3420,8 @@ const server = http.createServer(async (req, res) => {
     try {
       sendJSON(res, await handleDiscoverHome());
     } catch (err) {
-      console.error('[DiscoverHome]', err);
-      sendJSON(res, { error: err.message, loggedIn: false, dailySongs: [], playlists: [], podcasts: [] }, 500);
+      console.error('[DiscoverHome]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err), loggedIn: false, dailySongs: [], playlists: [], podcasts: [] }, 500);
     }
     return;
   }
@@ -3395,10 +3436,10 @@ const server = http.createServer(async (req, res) => {
       });
       sendJSON(res, data);
     } catch (err) {
-      console.error('[WeatherRadio]', err);
+      console.error('[WeatherRadio]' + ' upstream request failed');
       sendJSON(res, {
         ok: false,
-        error: err.message,
+        error: safeFailure(err),
         weather: null,
         radio: { title: '天气电台', subtitle: '天气暂时没有回来，可以先听今日推荐。', seedQueries: [], songs: [] },
       }, 500);
@@ -3410,8 +3451,8 @@ const server = http.createServer(async (req, res) => {
     try {
       sendJSON(res, { ok: true, location: await fetchIpWeatherLocation() });
     } catch (err) {
-      console.error('[WeatherIpLocation]', err);
-      sendJSON(res, { ok: false, error: err.message, location: null }, 500);
+      console.error('[WeatherIpLocation]' + ' upstream request failed');
+      sendJSON(res, { ok: false, error: safeFailure(err), location: null }, 500);
     }
     return;
   }
@@ -3423,7 +3464,7 @@ const server = http.createServer(async (req, res) => {
       const limit = parseInt(url.searchParams.get('limit') || '20');
       const songs = await handleSearch(kw, limit);
       sendJSON(res, { songs });
-    } catch (err) { console.error('[Search]', err); sendJSON(res, { error: err.message, songs: [] }, 500); }
+    } catch (err) { console.error('[Search]' + ' upstream request failed'); sendJSON(res, { error: safeFailure(err), songs: [] }, 500); }
     return;
   }
 
@@ -3434,8 +3475,8 @@ const server = http.createServer(async (req, res) => {
       const songs = await handleQQSearch(kw, limit);
       sendJSON(res, { provider: 'qq', songs });
     } catch (err) {
-      console.error('[QQSearch]', err);
-      sendJSON(res, { provider: 'qq', error: err.message, songs: [] }, 500);
+      console.error('[QQSearch]' + ' upstream request failed');
+      sendJSON(res, { provider: 'qq', error: safeFailure(err), songs: [] }, 500);
     }
     return;
   }
@@ -3448,8 +3489,8 @@ const server = http.createServer(async (req, res) => {
       const info = await handleQQSongUrl(mid, mediaMid, quality);
       sendJSON(res, info);
     } catch (err) {
-      console.error('[QQSongUrl]', err);
-      sendJSON(res, { provider: 'qq', url: '', playable: false, error: err.message }, 500);
+      console.error('[QQSongUrl]' + ' upstream request failed');
+      sendJSON(res, { provider: 'qq', url: '', playable: false, error: safeFailure(err) }, 500);
     }
     return;
   }
@@ -3462,8 +3503,8 @@ const server = http.createServer(async (req, res) => {
       const data = await handleQQLyric(mid, id);
       sendJSON(res, data);
     } catch (err) {
-      console.error('[QQLyric]', err);
-      sendJSON(res, { provider: 'qq', error: err.message, lyric: '' }, 500);
+      console.error('[QQLyric]' + ' upstream request failed');
+      sendJSON(res, { provider: 'qq', error: safeFailure(err), lyric: '' }, 500);
     }
     return;
   }
@@ -3474,8 +3515,8 @@ const server = http.createServer(async (req, res) => {
       const info = await getQQLoginInfo();
       sendJSON(res, info);
     } catch (err) {
-      console.error('[QQLoginStatus]', err);
-      sendJSON(res, { provider: 'qq', loggedIn: false, error: err.message }, 500);
+      console.error('[QQLoginStatus]' + ' upstream request failed');
+      sendJSON(res, { provider: 'qq', loggedIn: false, error: safeFailure(err) }, 500);
     }
     return;
   }
@@ -3490,19 +3531,24 @@ const server = http.createServer(async (req, res) => {
         sendJSON(res, { provider: 'qq', loggedIn: false, error: 'INVALID_QQ_COOKIE', message: 'QQ cookie 缺少 uin 或有效登录票据' }, 400);
         return;
       }
+      const info = await getQQLoginInfo(normalized);
+      if (!info.loggedIn || !info.verified) {
+        sendJSON(res, { ...info, saved: false, message: info.message || 'QQ 凭据验证未通过，未替换已有会话' }, 422); return;
+      }
       saveQQCookie(normalized);
-      const info = await getQQLoginInfo();
       sendJSON(res, { ...info, saved: true });
     } catch (err) {
-      console.error('[QQLoginCookie]', err);
-      sendJSON(res, { provider: 'qq', loggedIn: false, error: err.message }, 500);
+      console.error('[QQLoginCookie] validation or persistence failed');
+      sendJSON(res, { provider: 'qq', loggedIn: false, saved: false, error: 'QQ_LOGIN_FAILED', message: 'QQ 验证或凭据保存失败' }, 500);
     }
     return;
   }
 
   if (pn === '/api/qq/logout') {
-    saveQQCookie('');
-    sendJSON(res, { provider: 'qq', ok: true, loggedIn: false });
+    try {
+      saveQQCookie('');
+      sendJSON(res, { provider: 'qq', ok: true, loggedIn: false });
+    } catch (error) { sendJSON(res, { error: 'CREDENTIAL_CLEAR_FAILED', message: 'QQ 后端凭据清除失败，请检查服务端文件权限' }, 500); }
     return;
   }
 
@@ -3511,8 +3557,8 @@ const server = http.createServer(async (req, res) => {
       const data = await handleQQUserPlaylists();
       sendJSON(res, data);
     } catch (err) {
-      console.error('[QQUserPlaylists]', err);
-      sendJSON(res, { provider: 'qq', loggedIn: false, error: err.message, playlists: [] }, 500);
+      console.error('[QQUserPlaylists]' + ' upstream request failed');
+      sendJSON(res, { provider: 'qq', loggedIn: false, error: safeFailure(err), playlists: [] }, 500);
     }
     return;
   }
@@ -3523,8 +3569,8 @@ const server = http.createServer(async (req, res) => {
       const data = await handleQQPlaylistTracks(id);
       sendJSON(res, data);
     } catch (err) {
-      console.error('[QQPlaylistTracks]', err);
-      sendJSON(res, { provider: 'qq', error: err.message, tracks: [] }, 500);
+      console.error('[QQPlaylistTracks]' + ' upstream request failed');
+      sendJSON(res, { provider: 'qq', error: safeFailure(err), tracks: [] }, 500);
     }
     return;
   }
@@ -3540,8 +3586,8 @@ const server = http.createServer(async (req, res) => {
       const data = await handleQQArtistDetail(mid, limit);
       sendJSON(res, data);
     } catch (err) {
-      console.error('[QQArtistDetail]', err);
-      sendJSON(res, { provider: 'qq', error: err.message, artist: null, songs: [] }, 500);
+      console.error('[QQArtistDetail]' + ' upstream request failed');
+      sendJSON(res, { provider: 'qq', error: safeFailure(err), artist: null, songs: [] }, 500);
     }
     return;
   }
@@ -3555,8 +3601,8 @@ const server = http.createServer(async (req, res) => {
       const data = await handleQQSongComments(id, mid, limit, offset);
       sendJSON(res, data);
     } catch (err) {
-      console.error('[QQSongComments]', err);
-      sendJSON(res, { provider: 'qq', error: err.message, comments: [] }, 500);
+      console.error('[QQSongComments]' + ' upstream request failed');
+      sendJSON(res, { provider: 'qq', error: safeFailure(err), comments: [] }, 500);
     }
     return;
   }
@@ -3572,8 +3618,8 @@ const server = http.createServer(async (req, res) => {
       const podcasts = raw.map(mapPodcastRadio).filter(p => p.id);
       sendJSON(res, { podcasts, total: result.djRadiosCount || result.djradiosCount || podcasts.length });
     } catch (err) {
-      console.error('[PodcastSearch]', err);
-      sendJSON(res, { error: err.message, podcasts: [] }, 500);
+      console.error('[PodcastSearch]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err), podcasts: [] }, 500);
     }
     return;
   }
@@ -3588,8 +3634,8 @@ const server = http.createServer(async (req, res) => {
       const podcasts = (Array.isArray(raw) ? raw : []).map(mapPodcastRadio).filter(p => p.id);
       sendJSON(res, { podcasts, more: !!body.hasMore });
     } catch (err) {
-      console.error('[PodcastHot]', err);
-      sendJSON(res, { error: err.message, podcasts: [] }, 500);
+      console.error('[PodcastHot]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err), podcasts: [] }, 500);
     }
     return;
   }
@@ -3603,8 +3649,8 @@ const server = http.createServer(async (req, res) => {
       const radio = mapPodcastRadio(body.data || body.djRadio || body.radio || body);
       sendJSON(res, { podcast: radio });
     } catch (err) {
-      console.error('[PodcastDetail]', err);
-      sendJSON(res, { error: err.message }, 500);
+      console.error('[PodcastDetail]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err) }, 500);
     }
     return;
   }
@@ -3624,8 +3670,8 @@ const server = http.createServer(async (req, res) => {
         .filter(p => p.id && p.name);
       sendJSON(res, { radio, programs, more: !!body.more, total: body.count || programs.length });
     } catch (err) {
-      console.error('[PodcastPrograms]', err);
-      sendJSON(res, { error: err.message, programs: [] }, 500);
+      console.error('[PodcastPrograms]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err), programs: [] }, 500);
     }
     return;
   }
@@ -3644,14 +3690,14 @@ const server = http.createServer(async (req, res) => {
           const data = await fetchMyPodcastItems(key, info, 12, 0);
           return podcastCollectionMeta(key, data.items || []);
         } catch (e) {
-          console.warn('[MyPodcast]', key, e.message);
+          console.warn('[MyPodcast]', key, safeFailure(e));
           return podcastCollectionMeta(key, []);
         }
       }));
       sendJSON(res, { loggedIn: true, collections });
     } catch (err) {
-      console.error('[MyPodcast]', err);
-      sendJSON(res, { error: err.message, collections: [] }, 500);
+      console.error('[MyPodcast]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err), collections: [] }, 500);
     }
     return;
   }
@@ -3666,8 +3712,8 @@ const server = http.createServer(async (req, res) => {
       const data = await fetchMyPodcastItems(key, info, limit, offset);
       sendJSON(res, { loggedIn: true, key, ...podcastCollectionMeta(key, data.items || []), itemType: data.itemType, items: data.items || [] });
     } catch (err) {
-      console.error('[MyPodcastItems]', err);
-      sendJSON(res, { error: err.message, items: [] }, 500);
+      console.error('[MyPodcastItems]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err), items: [] }, 500);
     }
     return;
   }
@@ -3687,7 +3733,7 @@ const server = http.createServer(async (req, res) => {
         isSvip: !!loginInfo.isSvip,
         vipLabel: loginInfo.vipLabel || '无VIP',
       });
-    } catch (err) { console.error('[SongUrl]', err); sendJSON(res, { error: err.message }, 500); }
+    } catch (err) { console.error('[SongUrl]' + ' upstream request failed'); sendJSON(res, { error: safeFailure(err) }, 500); }
     return;
   }
 
@@ -3701,25 +3747,15 @@ const server = http.createServer(async (req, res) => {
         sendJSON(res, { loggedIn: false, error: 'INVALID_NETEASE_COOKIE', message: '网易云 cookie 缺少 MUSIC_U' }, 400);
         return;
       }
-      saveCookie(normalized);
-      let info = await getLoginInfo();
-      if (!info.loggedIn && userCookie) {
-        info = {
-          loggedIn: true,
-          pendingProfile: true,
-          nickname: '网易云用户',
-          avatar: '',
-          vipType: 0,
-          vipLevel: 'none',
-          isVip: false,
-          isSvip: false,
-          vipLabel: '无VIP',
-        };
+      const info = await getLoginInfo(normalized);
+      if (!info.loggedIn || !info.verified) {
+        sendJSON(res, { ...info, saved: false, message: '网易云凭据验证未通过，未替换已有会话；检查凭据、网络或稍后重试' }, 422); return;
       }
+      saveCookie(normalized);
       sendJSON(res, { ...info, saved: true, hasCookie: !!userCookie });
     } catch (err) {
-      console.error('[LoginCookie]', err);
-      sendJSON(res, { loggedIn: false, error: err.message }, 500);
+      console.error('[LoginCookie] validation or persistence failed');
+      sendJSON(res, { loggedIn: false, saved: false, error: 'NETEASE_LOGIN_FAILED', message: '网易云验证或凭据保存失败' }, 500);
     }
     return;
   }
@@ -3727,6 +3763,8 @@ const server = http.createServer(async (req, res) => {
   // ---------- 登录: QR Key ----------
   // ---------- 播客 DJ 长音频后端离线锁拍 ----------
   if (pn === '/api/podcast/dj-beatmap') {
+    try { require.resolve('mpg123-decoder'); }
+    catch (_) { sendJSON(res, { ok: false, error: 'DECODER_UNAVAILABLE', message: '开发参考后端未包含播客解码组件，无法执行此分析' }, 501); return; }
     try {
       const audioUrl = url.searchParams.get('url');
       const durationSec = Math.max(0, Number(url.searchParams.get('duration') || 0) || 0);
@@ -3743,8 +3781,8 @@ const server = http.createServer(async (req, res) => {
       console.log('[PodcastDjBeatmap] done beats:', map.visualBeatCount || 0, 'ms:', Date.now() - started, 'decode:', map.decode || {});
       sendJSON(res, { ok: true, map });
     } catch (err) {
-      console.error('[PodcastDjBeatmap]', err);
-      sendJSON(res, { ok: false, error: err.message || String(err) }, 500);
+      console.error('[PodcastDjBeatmap]' + ' upstream request failed');
+      sendJSON(res, { ok: false, error: safeFailure(err) }, 500);
     }
     return;
   }
@@ -3753,8 +3791,9 @@ const server = http.createServer(async (req, res) => {
     try {
       const r = await login_qr_key({ timestamp: Date.now() });
       const key = r.body && r.body.data && r.body.data.unikey;
+      if (!key) { sendJSON(res, { error: 'QR_KEY_UNAVAILABLE', message: '官方接口未返回二维码 key' }, 502); return; }
       sendJSON(res, { key });
-    } catch (err) { sendJSON(res, { error: err.message }, 500); }
+    } catch (err) { sendJSON(res, { error: safeFailure(err) }, 500); }
     return;
   }
 
@@ -3762,10 +3801,12 @@ const server = http.createServer(async (req, res) => {
   if (pn === '/api/login/qr/create') {
     try {
       const key = url.searchParams.get('key');
+      if (!key) { sendJSON(res, { error: 'MISSING_QR_KEY' }, 400); return; }
       const r = await login_qr_create({ key, qrimg: true, timestamp: Date.now() });
       const d = r.body && r.body.data;
+      if (!d || !d.qrimg || !d.qrurl) { sendJSON(res, { error: 'QR_IMAGE_UNAVAILABLE' }, 502); return; }
       sendJSON(res, { img: d && d.qrimg, url: d && d.qrurl });
-    } catch (err) { sendJSON(res, { error: err.message }, 500); }
+    } catch (err) { sendJSON(res, { error: safeFailure(err) }, 500); }
     return;
   }
 
@@ -3773,6 +3814,7 @@ const server = http.createServer(async (req, res) => {
   if (pn === '/api/login/qr/check') {
     try {
       const key = url.searchParams.get('key');
+      if (!key) { sendJSON(res, { error: 'MISSING_QR_KEY' }, 400); return; }
       let r = await login_qr_check({ key, noCookie: true, timestamp: Date.now() });
       let body = r.body || {};
       let code = Number(body.code || r.code);
@@ -3790,35 +3832,19 @@ const server = http.createServer(async (req, res) => {
             cookie = retryCookie;
           }
         } catch (retryErr) {
-          console.warn('[Login] qr cookie retry failed:', retryErr.message);
+          console.warn('[Login] qr credential retrieval failed');
         }
       }
       // 803 = 授权成功, 802 = 已扫待确认, 801 = 等待扫码, 800 = 二维码过期
       if (code === 803) {
-        if (cookie) saveCookie(cookie);
-        let info = await getLoginInfo();
-        if (!info.loggedIn) {
-          const profile = body.profile || (body.data && body.data.profile) || {};
-          info = normalizeLoginInfo(profile, body.account || (body.data && body.data.account), body.data || body);
-        }
-        if (!info.loggedIn && cookie) {
-          info = {
-            loggedIn: true,
-            pendingProfile: true,
-            nickname: (body.nickname || (body.profile && body.profile.nickname) || '网易云用户'),
-            avatar: body.avatarUrl || (body.profile && body.profile.avatarUrl) || '',
-            vipType: 0,
-            vipLevel: 'none',
-            isVip: false,
-            isSvip: false,
-            vipLabel: '无VIP',
-          };
-        }
-        sendJSON(res, { code, message: msg, ...info, hasCookie: !!cookie });
+        const info = cookie ? await getLoginInfo(cookie) : { loggedIn: false, verified: false, credentialState: 'missing' };
+        if (info.loggedIn && info.verified) saveCookie(cookie);
+        sendJSON(res, { code, ...info, hasCookie: !!cookie, saved: !!(info.loggedIn && info.verified),
+          message: info.loggedIn ? '官方账号验证通过' : (cookie ? '扫码已确认，但账号验证尚未通过，请重试' : '扫码已确认，但未取得凭据，请刷新二维码') });
         return;
       }
       sendJSON(res, { code, message: msg, nickname: body.nickname, avatar: body.avatarUrl });
-    } catch (err) { sendJSON(res, { error: err.message }, 500); }
+    } catch (err) { sendJSON(res, { error: safeFailure(err) }, 500); }
     return;
   }
 
@@ -3832,8 +3858,10 @@ const server = http.createServer(async (req, res) => {
   // ---------- 登出 ----------
   if (pn === '/api/logout') {
     try { await logout({ cookie: userCookie }); } catch (e) {}
-    saveCookie('');
-    sendJSON(res, { ok: true });
+    try {
+      saveCookie('');
+      sendJSON(res, { ok: true });
+    } catch (error) { sendJSON(res, { error: 'CREDENTIAL_CLEAR_FAILED', message: '网易云后端凭据清除失败，请检查服务端文件权限' }, 500); }
     return;
   }
 
@@ -3856,8 +3884,8 @@ const server = http.createServer(async (req, res) => {
       }));
       sendJSON(res, { loggedIn: true, userId: info.userId, playlists: list });
     } catch (err) {
-      console.error('[UserPlaylists]', err);
-      sendJSON(res, { error: err.message, loggedIn: false, playlists: [] }, 500);
+      console.error('[UserPlaylists]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err), loggedIn: false, playlists: [] }, 500);
     }
     return;
   }
@@ -3885,7 +3913,7 @@ const server = http.createServer(async (req, res) => {
           }
         }
       } catch (e) {
-        console.warn('[LikeCheck] direct check failed:', e.message);
+        console.warn('[LikeCheck] direct check failed:', safeFailure(e));
       }
       if (!likedIds.length) {
         const r = await likelist({ uid: info.userId, cookie: userCookie, timestamp: Date.now() });
@@ -3896,8 +3924,8 @@ const server = http.createServer(async (req, res) => {
       ids.forEach(id => { liked[id] = set.has(String(id)); });
       sendJSON(res, { loggedIn: true, ids, liked });
     } catch (err) {
-      console.error('[LikeCheck]', err);
-      sendJSON(res, { error: err.message }, 500);
+      console.error('[LikeCheck]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err) }, 500);
     }
     return;
   }
@@ -3915,8 +3943,8 @@ const server = http.createServer(async (req, res) => {
       const code = (r.body && r.body.code) || r.code || 200;
       sendJSON(res, { loggedIn: true, id, liked: nextLike, code, body: r.body || r });
     } catch (err) {
-      console.error('[Like]', err);
-      sendJSON(res, { error: err.message }, 500);
+      console.error('[Like]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err) }, 500);
     }
     return;
   }
@@ -3934,8 +3962,8 @@ const server = http.createServer(async (req, res) => {
       const created = (r.body && (r.body.playlist || r.body.data)) || {};
       sendJSON(res, { loggedIn: true, playlist: created, body: r.body || r });
     } catch (err) {
-      console.error('[PlaylistCreate]', err);
-      sendJSON(res, { error: err.message }, 500);
+      console.error('[PlaylistCreate]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err) }, 500);
     }
     return;
   }
@@ -3985,8 +4013,8 @@ const server = http.createServer(async (req, res) => {
       }
       sendJSON(res, { loggedIn: true, pid, id, success: true, code: finalCode, body: finalBody, attempts });
     } catch (err) {
-      console.error('[PlaylistAddSong]', err);
-      sendJSON(res, { error: err.message }, 500);
+      console.error('[PlaylistAddSong]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err) }, 500);
     }
     return;
   }
@@ -4005,7 +4033,7 @@ const server = http.createServer(async (req, res) => {
           source = 'lyric_new';
         }
       } catch (errNew) {
-        console.warn('[LyricNew]', errNew.message);
+        console.warn('[LyricNew]', safeFailure(errNew));
       }
       if (!((body.lrc && body.lrc.lyric) || (body.yrc && body.yrc.lyric))) {
         const r = await lyric({ id, cookie: userCookie, timestamp: Date.now() });
@@ -4019,8 +4047,8 @@ const server = http.createServer(async (req, res) => {
         source,
       });
     } catch (err) {
-      console.error('[Lyric]', err);
-      sendJSON(res, { error: err.message, lyric: '' }, 500);
+      console.error('[Lyric]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err), lyric: '' }, 500);
     }
     return;
   }
@@ -4044,8 +4072,8 @@ const server = http.createServer(async (req, res) => {
       })).filter(c => c.content);
       sendJSON(res, { id, total: body.total || 0, comments, hot: !!(body.hotComments && offset === 0), body });
     } catch (err) {
-      console.error('[SongComments]', err);
-      sendJSON(res, { error: err.message, comments: [] }, 500);
+      console.error('[SongComments]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err), comments: [] }, 500);
     }
     return;
   }
@@ -4061,7 +4089,7 @@ const server = http.createServer(async (req, res) => {
         const detail = await artist_detail({ id, cookie: userCookie, timestamp: Date.now() });
         detailBody = detail.body || detail || {};
       } catch (e) {
-        console.warn('[ArtistDetail] detail failed:', e.message);
+        console.warn('[ArtistDetail] detail failed:', safeFailure(e));
       }
       let rawSongs = [];
       try {
@@ -4069,7 +4097,7 @@ const server = http.createServer(async (req, res) => {
         const b = list.body || list || {};
         rawSongs = (b.songs || (b.data && b.data.songs) || []);
       } catch (e) {
-        console.warn('[ArtistSongs] hot failed:', e.message);
+        console.warn('[ArtistSongs] hot failed:', safeFailure(e));
       }
       if (!rawSongs.length) {
         const top = await artist_top_song({ id, cookie: userCookie, timestamp: Date.now() });
@@ -4092,8 +4120,8 @@ const server = http.createServer(async (req, res) => {
         body: detailBody,
       });
     } catch (err) {
-      console.error('[ArtistDetail]', err);
-      sendJSON(res, { error: err.message, songs: [] }, 500);
+      console.error('[ArtistDetail]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err), songs: [] }, 500);
     }
     return;
   }
@@ -4113,7 +4141,7 @@ const server = http.createServer(async (req, res) => {
           const all = await playlist_track_all({ id, limit: 500, offset: 0, cookie: userCookie, timestamp: Date.now() });
           rawTracks = (all.body && (all.body.songs || all.body.tracks)) || [];
         } catch (err) {
-          console.warn('[PlaylistTracks] playlist_track_all failed, fallback to detail:', err.message);
+          console.warn('[PlaylistTracks] playlist_track_all failed, fallback to detail:', safeFailure(err));
         }
       }
 
@@ -4129,8 +4157,8 @@ const server = http.createServer(async (req, res) => {
       if (!playlistMeta.trackCount) playlistMeta.trackCount = tracks.length;
       sendJSON(res, { playlist: playlistMeta, tracks });
     } catch (err) {
-      console.error('[PlaylistTracks]', err);
-      sendJSON(res, { error: err.message, tracks: [] }, 500);
+      console.error('[PlaylistTracks]' + ' upstream request failed');
+      sendJSON(res, { error: safeFailure(err), tracks: [] }, 500);
     }
     return;
   }
@@ -4141,7 +4169,7 @@ const server = http.createServer(async (req, res) => {
       const coverUrl = url.searchParams.get('url');
       // URL 校验: 必须是 http(s) 开头, 否则直接 404 (不要让 fetch 抛错)
       if (!coverUrl || !/^https?:\/\//i.test(coverUrl)) {
-        res.writeHead(400, { 'Access-Control-Allow-Origin': '*' });
+        res.writeHead(400);
         res.end('Invalid cover url');
         return;
       }
@@ -4150,7 +4178,6 @@ const server = http.createServer(async (req, res) => {
       const cl  = resp.headers.get('content-length');
       const hdr = {
         'Content-Type': ct,
-        'Access-Control-Allow-Origin': '*',
         'Cross-Origin-Resource-Policy': 'cross-origin',
         'Cache-Control': 'public, max-age=86400',
       };
@@ -4159,7 +4186,7 @@ const server = http.createServer(async (req, res) => {
       const reader = resp.body.getReader();
       while (true) { const c = await reader.read(); if (c.done) break; res.write(c.value); }
       res.end();
-    } catch (err) { console.error('[Cover]', err); res.writeHead(500); res.end(); }
+    } catch (err) { console.error('[Cover]' + ' upstream request failed'); res.writeHead(500); res.end(); }
     return;
   }
 
@@ -4173,7 +4200,6 @@ const server = http.createServer(async (req, res) => {
       const up = await fetch(audioUrl, { headers: hdr });
       const out = {
         'Content-Type': audioContentTypeForUrl(audioUrl, up.headers.get('content-type')),
-        'Access-Control-Allow-Origin': '*',
         'Accept-Ranges': 'bytes',
       };
       const cl = up.headers.get('content-length'); if (cl) out['Content-Length'] = cl;
@@ -4182,7 +4208,7 @@ const server = http.createServer(async (req, res) => {
       const reader = up.body.getReader();
       while (true) { const c = await reader.read(); if (c.done) break; res.write(c.value); }
       res.end();
-    } catch (err) { console.error('[Audio]', err); res.writeHead(500); res.end(); }
+    } catch (err) { console.error('[Audio]' + ' upstream request failed'); res.writeHead(500); res.end(); }
     return;
   }
 
@@ -4192,15 +4218,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  let filePath = pn === '/' ? '/index.html' : pn;
-  filePath = path.join(__dirname, 'public', filePath);
-  serveStatic(res, filePath);
+  // This deployment serves an API only. Android bundles its own trusted UI.
+  sendJSON(res, { error: 'NOT_FOUND' }, 404);
 });
 
 server.listen(PORT, HOST, () => {
+  const address = typeof server.address === 'function' ? server.address() : null;
   console.log('======================================================');
-  console.log(' 粒子音乐可视化 v2  →  http://localhost:' + PORT);
-  console.log(' 登录态: ' + (userCookie ? '已登录(cookie已加载)' : '未登录'));
+  console.log(' 粒子音乐可视化服务已启动 → http://localhost:' + (address && address.port || PORT));
+  console.log(' 单用户后端；磁盘凭据仅在官方验证通过后视为已登录');
   console.log('======================================================');
 });
 

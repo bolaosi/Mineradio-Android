@@ -1,18 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <permission android:name="com.mineradio.android.permission.QQ_LOGIN_CONTROL" android:protectionLevel="signature" />
+    <uses-permission android:name="com.mineradio.android.permission.QQ_LOGIN_CONTROL" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="Mineradio"
         android:supportsRtl="true"
         android:theme="@style/Theme.Mineradio"
         android:usesCleartextTraffic="true">
+        <activity
+            android:name=".QQLoginActivity"
+            android:exported="false"
+            android:process=":qqlogin"
+            android:excludeFromRecents="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
+        <service
+            android:name=".playback.PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
         <activity
             android:name=".MainActivity"
             android:exported="true"

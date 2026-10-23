@@ -1,26 +1,8 @@
 @echo off
-chcp 65001 >nul
-echo ========================================
-echo  Mineradio Android APK Builder
-echo ========================================
-
-set PROJECT_DIR=%~dp0
-set NODE_PROJECT=%PROJECT_DIR%app\src\main\assets\nodejs-project
-
-echo [1/3] Installing Node.js backend dependencies...
-cd /d "%NODE_PROJECT%"
-call npm install
-if %ERRORLEVEL% NEQ 0 (
-    echo Warning: npm install failed, some music features may not work.
-)
-
-echo [2/3] Setting JAVA_HOME...
-set JAVA_HOME=D:\APP\Java
-
-echo [3/3] Building APK...
-cd /d "%PROJECT_DIR%"
-call gradlew assembleDebug
-
-echo.
-echo APK should be at: app\build\outputs\apk\debug\
-pause
+setlocal
+cd /d "%~dp0"
+rem Set JAVA_HOME to JDK 17 or 21 and ANDROID_HOME to an installed Android SDK.
+rem Official API clients are built in; no backend deployment is needed. Node is excluded.
+call gradlew.bat --no-daemon lintDebug testDebugUnitTest assembleDebug
+if errorlevel 1 exit /b %errorlevel%
+echo APK: %~dp0app\build\outputs\apk\debug\app-debug.apk

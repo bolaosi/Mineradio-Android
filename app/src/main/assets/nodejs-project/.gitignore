@@ -1,0 +1,8 @@
+node_modules/
+.cookie*
+.qq-cookie*
+.env
+.env.*
+updates/
+*.log
+data/
