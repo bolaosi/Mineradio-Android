@@ -34,7 +34,7 @@ README中的截图由用户明确授权公开，原样保留，仅用于展示�
 - SHA256：`038e9f5a672db7624442074d5b61645ed2c19ae9fef5a8868f6fcbd7b2824893`。
 - 本地交付证书SHA256：`24f8ec67a0a3402d9dfc56ba42e4620c1ec6f712cc14ddaa63bba26107fed12e`，与之前本地交付一致。
 
-以上摘要仅标识此前本地交付APK。GitHub Actions产物会重新构建、使用自己的debug证书，不能套用这些摘要或假定支持覆盖安装。本次只推送源码、测试、构建配置、文档和用户截图，不创建Release。
+以上摘要仅标识此前本地交付APK。GitHub Actions产物会重新构建、使用自己的debug证书，不能套用这些摘要或假定支持覆盖安装。v1.2.3 Release上传的是上述本地交付APK，沿用原证书；同时提供对应Git源码、校验文件和用户截图，保留旧Release。
 
 ## 最短实机验收
 
@@ -44,3 +44,5 @@ README中的截图由用户明确授权公开，原样保留，仅用于展示�
 4. 网易扫码并在官方App确认登录后，请手动关闭登录界面返回播放器；QQ完成官方授权后返回验证。分别验证账号、歌单和歌曲权限。只收集安全错误码，不公开Cookie、token或完整签名音源地址。
 
 构建及测试命令见 [BUILD_AND_VERIFY.md](../BUILD_AND_VERIFY.md)。本地备份、测试截图和运行日志保留在开发者的忽略目录，没有随源码上传。
+
+GitHub Actions运行 [39930519361](https://github.com/bolaosi/Mineradio-Android/actions/runs/39930519361) 已核对为成功；Release APK仍使用前述本地签名产物。

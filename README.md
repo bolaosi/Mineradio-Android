@@ -12,6 +12,8 @@
 
 **1.2.3-debug · versionCode 8 · Android 7.0 / API 24及以上**
 
+[下载 v1.2.3 APK](https://github.com/bolaosi/Mineradio-Android/releases/download/v1.2.3/Mineradio-Android-1.2.3-debug.apk) · [更新说明与历史版本](https://github.com/bolaosi/Mineradio-Android/releases)
+
 - 网易云二维码登录：获取、生成、轮询、确认、过期刷新与取消；官方账号验证通过后才显示登录。支持保存PNG，供另一台设备扫码或官方App相册识别。
 - QQ音乐：隔离的官方登录窗口与验证回传（API 28+），保留本人完整Cookie导入。真实账号自动登录、歌单读取及播放权限仍需分别验证。
 - 本地音乐：系统文件选择器多选导入、播放队列、暂停继续、进度拖动、前后首及移除；具有持久读授权的文件可在重启后恢复。
@@ -33,7 +35,7 @@
 3. QQ点“打开QQ官方登录”，完成官方授权后返回验证；第三方页面或风控受限时，可使用Cookie备用入口。
 4. 登录、歌单可读、某首歌曲有播放权限是不同的状态。会员、版权、地区及试听限制以官方响应为准。
 
-代码和构建工作流见本仓库。已完成本地APK构建；本次代码推送不创建GitHub Release。自动构建产物可在 [Actions](https://github.com/bolaosi/Mineradio-Android/actions/workflows/build-apk.yml) 中查看，具体是否成功以对应运行记录为准。
+正式下载入口为 [v1.2.3 Release](https://github.com/bolaosi/Mineradio-Android/releases/tag/v1.2.3)，附此前本地交付的同签名Debug APK、校验值和对应源码；旧Release保留。自动构建产物可在 [Actions](https://github.com/bolaosi/Mineradio-Android/actions/workflows/build-apk.yml) 中查看，具体是否成功以对应运行记录为准。
 
 自行构建和CI默认使用各自的debug证书，与此前本地交付APK的签名可能不同；覆盖安装需要一致的签名。私钥不入库。
 
